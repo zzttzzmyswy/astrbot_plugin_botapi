@@ -57,6 +57,12 @@ class BotApiAdapter(Platform):
             support_proactive_message=True,
         )
 
+    def run(self):
+        # Stub — real impl in Task 13 (run/terminate/send_by_session).
+        # Needed now so the class is concrete (Platform.run is abstract), letting unit tests
+        # instantiate via __new__ on py3.14 without the __abstractmethods__ trick.
+        raise NotImplementedError("run() implemented in Task 13")
+
     # ── 非阻塞 SSE 投递（spec §4.2）──
     def _put(self, q: asyncio.Queue, evt):
         try:
