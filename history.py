@@ -38,3 +38,33 @@ async def catchup_events(platform_id, token, since):
         etype = "thinking" if c.get("kind") == "thinking" else "message"
         out.append(SSEEvent(etype, row_to_sse(r)))
     return out
+
+
+async def _insert(content, user_id, sender_id, sender_name):
+    rt = runtime()
+    if not (rt.message_history_manager and rt.adapter):
+        return
+    await rt.message_history_manager.insert(
+        platform_id=rt.adapter.platform_id, user_id=user_id, content=content,
+        sender_id=sender_id, sender_name=sender_name)
+
+
+async def persist_inbound_text(token, message_id, text):
+    if not text:
+        return
+    await _insert({"role": "user", "kind": "user", "text": text, "message_id": message_id},
+                  token, token, "User")
+
+
+async def persist_assistant_text(token, message_id, text, kind: str):  # kind: final/tool_status
+    if not text:
+        return
+    await _insert({"role": "assistant", "kind": kind, "text": text, "message_id": message_id},
+                  token, "bot", "BotAPI")
+
+
+async def persist_assistant_thinking(token, message_id, text):
+    if not text:
+        return
+    await _insert({"role": "assistant", "kind": "thinking", "text": text, "message_id": message_id},
+                  token, "bot", "BotAPI")
