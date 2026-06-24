@@ -99,6 +99,16 @@ def _setup_routes(adapter):
         resp.timeout = None
         return resp
 
+    @app.get("/api/v1/botapi/history")
+    async def get_history():
+        from . import history as hist_mod
+        token = _extract_token(adapter)
+        since = request.args.get("since")
+        before = request.args.get("before")
+        limit = min(int(request.args.get("limit", 50)), 200)
+        msgs, has_more = await hist_mod.get_history(adapter.platform_id, token, since, before, limit)
+        return jsonify({"messages": msgs, "has_more": has_more})
+
 
 async def _stream_gen(adapter, token, q, since):
     try:
