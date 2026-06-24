@@ -64,6 +64,23 @@ def _setup_routes(adapter):
         adapter.commit_event(event)
         return jsonify({"message_id": msg.message_id})
 
+    @app.post("/api/v1/botapi/upload")
+    async def upload_file():
+        files = await request.files
+        file = files.get("file")
+        if not file:
+            return jsonify({"error": "no_file"}), 400
+        from werkzeug.utils import secure_filename
+        filename = secure_filename(file.filename or "untitled")
+        file_id = f"f_{uuid.uuid4().hex[:10]}"
+        save_path = adapter._upload_dir / f"{file_id}_{filename}"
+        await file.save(save_path)
+        info = {"file_id": file_id, "name": filename,
+                "mime_type": file.content_type or "application/octet-stream",
+                "size": save_path.stat().st_size}
+        adapter._uploaded_files[file_id] = {**info, "path": str(save_path)}
+        return jsonify(info)
+
 
 def _extract_token(adapter):
     return request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
