@@ -23,6 +23,8 @@
         <tbody id="account-list"><tr class="empty-row"><td colspan="8">加载中...</td></tr></tbody>
       </table>
     </div>
+
+    <!-- 新增账户 -->
     <div id="modal-add" class="modal hidden">
       <div class="modal-content">
         <h3>新增 BotAPI 账户</h3>
@@ -34,6 +36,33 @@
         </div>
       </div>
     </div>
+
+    <!-- 改名（替代 prompt，sandbox 无 allow-modals） -->
+    <div id="modal-nickname" class="modal hidden">
+      <div class="modal-content">
+        <h3>设置昵称/备注</h3>
+        <label>昵称（留空清除）:<input type="text" id="input-nick-new" /></label>
+        <div class="modal-actions">
+          <button id="btn-nick-save" class="btn btn-primary">保存</button>
+          <button id="btn-nick-cancel" class="btn btn-secondary">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 删除确认（替代 confirm） -->
+    <div id="modal-confirm" class="modal hidden">
+      <div class="modal-content">
+        <h3>请确认</h3>
+        <p id="confirm-msg" class="confirm-msg"></p>
+        <div class="modal-actions">
+          <button id="btn-confirm-ok" class="btn btn-danger">确认</button>
+          <button id="btn-confirm-cancel" class="btn btn-secondary">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 提示（替代 alert） -->
+    <div id="toast" class="toast hidden"></div>
   </div>
   <script type="module" src="./app.js"></script>
 </body>

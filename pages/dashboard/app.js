@@ -12,30 +12,62 @@ function showStatus(msg) {
     `<tr class="empty-row"><td colspan="8">${esc(msg)}</td></tr>`;
 }
 
+// ── 页内对话框（iframe sandbox 无 allow-modals，原生 confirm/prompt/alert 全被拦）──
+
+function confirmDialog(message) {
+  return new Promise((resolve) => {
+    document.getElementById("confirm-msg").textContent = message;
+    const modal = document.getElementById("modal-confirm");
+    const ok = document.getElementById("btn-confirm-ok");
+    const cancel = document.getElementById("btn-confirm-cancel");
+    const done = (val) => { modal.classList.add("hidden"); ok.onclick = null; cancel.onclick = null; resolve(val); };
+    modal.classList.remove("hidden");
+    ok.onclick = () => done(true);
+    cancel.onclick = () => done(false);
+  });
+}
+
+function promptDialog(current) {
+  return new Promise((resolve) => {
+    const input = document.getElementById("input-nick-new");
+    input.value = current || "";
+    const modal = document.getElementById("modal-nickname");
+    const ok = document.getElementById("btn-nick-save");
+    const cancel = document.getElementById("btn-nick-cancel");
+    const done = (val) => { modal.classList.add("hidden"); ok.onclick = null; cancel.onclick = null; resolve(val); };
+    modal.classList.remove("hidden");
+    setTimeout(() => input.focus(), 0);
+    ok.onclick = () => done(input.value.trim());
+    cancel.onclick = () => done(null);
+    input.onkeydown = (e) => { if (e.key === "Enter") done(input.value.trim()); if (e.key === "Escape") done(null); };
+  });
+}
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.remove("hidden");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.add("hidden"), 3500);
+}
+
+// ── 主流程 ──
+
 async function init() {
-  setupToolbar();        // 顶部按钮（刷新/新增/创建/取消）
-  wireDelegation();      // 表格事件委托（改名/删除）—— 不用内联 onclick
-  if (!bridge) {
-    showStatus("Bridge 未就绪（请在 WebUI 插件页内打开此页面）");
-    log("no bridge");
-    return;
-  }
+  setupToolbar();
+  wireDelegation();
+  if (!bridge) { showStatus("Bridge 未就绪（请在 WebUI 插件页内打开此页面）"); log("no bridge"); return; }
   try {
     await withTimeout(bridge.ready(), 8000, "Bridge 握手超时（是否在 WebUI 插件页内打开？）");
     log("bridge ready");
-  } catch (e) {
-    showStatus(e.message);
-    log("bridge fail", e);
-    return;
-  }
+  } catch (e) { showStatus(e.message); log("bridge fail", e); return; }
   await refresh();
 }
 
 async function refresh() {
   const btn = document.getElementById("btn-refresh");
   const orig = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = "刷新中…";   // 可见反馈：按钮确实响应了
+  btn.disabled = true; btn.textContent = "刷新中…";
   try {
     const stats = await bridge.apiGet("stats");
     log("stats ok", stats);
@@ -48,17 +80,13 @@ async function refresh() {
     showStatus("加载失败: " + (err?.message || err));
     log("refresh fail", err);
   } finally {
-    btn.disabled = false;
-    btn.textContent = orig;
+    btn.disabled = false; btn.textContent = orig;
   }
 }
 
 function renderAccounts() {
   const tbody = document.getElementById("account-list");
-  if (!accounts.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="8">暂无账户</td></tr>';
-    return;
-  }
+  if (!accounts.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="8">暂无账户</td></tr>'; return; }
   tbody.innerHTML = accounts.map(a => `
     <tr>
       <td>${esc(a.nickname || "-")}</td>
@@ -75,7 +103,6 @@ function renderAccounts() {
     </tr>`).join('');
 }
 
-// 事件委托：一个监听器处理所有行的改名/删除（避免内联 onclick 的 CSP/作用域/引号转义问题）
 function wireDelegation() {
   document.getElementById("account-list").addEventListener("click", async (e) => {
     const btn = e.target.closest("button[data-action]");
@@ -103,32 +130,28 @@ function setupToolbar() {
       document.getElementById("input-token").value = "";
       document.getElementById("input-nickname").value = "";
       await refresh();
-    } catch (err) { alert("创建失败: " + (err?.message || err)); }
+    } catch (err) { toast("创建失败: " + (err?.message || err)); }
   });
 }
 
 async function setNickname(tokenHash, current) {
-  const nickname = prompt("设置昵称/备注（留空清除）：", current);
-  if (nickname === null) return;   // 取消
+  const nickname = await promptDialog(current);   // 页内模态（非 prompt()）
+  if (nickname === null) return;                   // 取消
   try {
-    await bridge.apiPost(`accounts/${tokenHash}/nickname`, { nickname: nickname.trim() });
+    await bridge.apiPost(`accounts/${tokenHash}/nickname`, { nickname });
     await refresh();
-  } catch (err) { alert("设置失败: " + (err?.message || err)); }
+  } catch (err) { toast("设置失败: " + (err?.message || err)); }
 }
 
 async function deleteAccount(tokenHash) {
-  if (!confirm(`确定删除 ${tokenHash}？`)) return;
+  if (!(await confirmDialog(`确定删除 ${tokenHash}？此操作不可撤销。`))) return;  // 页内模态（非 confirm()）
   try {
     await bridge.apiPost(`accounts/${tokenHash}/delete`, {});
     await refresh();
-  } catch (err) { alert("删除失败: " + (err?.message || err)); }
+  } catch (err) { toast("删除失败: " + (err?.message || err)); }
 }
 
-function esc(s) {
-  const d = document.createElement("div");
-  d.textContent = String(s ?? "");
-  return d.innerHTML;
-}
+function esc(s) { const d = document.createElement("div"); d.textContent = String(s ?? ""); return d.innerHTML; }
 
 init();
 log("app.js loaded");

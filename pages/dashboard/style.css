@@ -34,3 +34,6 @@ code { background:var(--bg); padding:2px 6px; border-radius:4px; font-size:12px;
 .modal-content label { display:block; margin-bottom:16px; font-size:13px; color:var(--text-secondary); }
 .modal-content input { display:block; width:100%; margin-top:6px; padding:8px 12px; border:1px solid var(--border); border-radius:8px; font-size:13px; background:var(--bg); color:var(--text); }
 .modal-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:16px; }
+.confirm-msg { font-size:14px; color:var(--text); margin-bottom:16px; word-break:break-all; }
+.toast { position:fixed; left:50%; bottom:32px; transform:translateX(-50%); background:var(--text); color:var(--bg); padding:10px 18px; border-radius:8px; font-size:13px; z-index:2000; box-shadow:0 4px 16px rgba(0,0,0,0.25); max-width:90vw; word-break:break-word; }
+.toast.hidden { display:none; }
