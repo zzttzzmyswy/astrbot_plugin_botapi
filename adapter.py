@@ -32,7 +32,13 @@ class BotApiAdapter(Platform):
     def __init__(self, platform_config: dict, platform_settings: dict, event_queue: asyncio.Queue) -> None:
         super().__init__(platform_config, event_queue)
         self.settings = platform_settings
-        self.cfg = BotApiConfig(**platform_config)
+        # platform_config 含 @register_platform_adapter 自动补的 type/enable/id（register.py:34-41），
+        # BotApiConfig 只收 host/port/tokens，故按字段取值而非 **platform_config（否则 TypeError 'type'）。
+        self.cfg = BotApiConfig(
+            host=platform_config.get("host", "0.0.0.0"),
+            port=int(platform_config.get("port", 9000)),
+            tokens=list(platform_config.get("tokens", [])),
+        )
         self.platform_id = self.meta().id
         self._token_to_origin: dict = {}
         self._sse_clients: dict = defaultdict(list)
@@ -46,7 +52,7 @@ class BotApiAdapter(Platform):
         self._serializer = MessageSerializer(_media_enabled=self._media_enabled)
         runtime().adapter = self
         from quart import Quart
-        self.app = Quart("astrbot_plugin_botapi")
+        self.app = Quart(__name__)   # 用 __name__（真实模块）；Quart("astrbot_plugin_botapi") 会因命名空间包在 Flask get_root_path 处 RuntimeError
         from .routes import _setup_routes
         self._setup_routes = lambda: _setup_routes(self)
         self._setup_routes()
