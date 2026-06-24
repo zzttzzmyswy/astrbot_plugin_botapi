@@ -2,7 +2,7 @@
 
 > BotAPI 适配器插件暴露给手机 App 的 HTTP API。App 经 REST 发消息/传文件、SSE 长连接收回复，断连重连自动补消息。
 
-- **Base URL**：`https://<your-domain>/api/v1/botapi`（经 nginx 反代到适配器端口，默认 9000）
+- **Base URL**：`https://<your-domain>/api/v1/botapi`（经 nginx 反代到适配器端口，默认 9000）；也可直连 `http://<host>:9000`，端点路径相同（`selfcheck.sh` 即直连）。
 - **认证**：除 `/auth` 外，所有请求须带 `Authorization: Bearer <token>`
 - **Content-Type**：`application/json`（普通请求）/ `multipart/form-data`（上传）
 
@@ -41,6 +41,7 @@ Content-Type: application/json
 ```json
 { "error": "invalid_token" }
 ```
+> 注意：`/auth` 的 401 形态是 `{"error":"invalid_token"}`（无 `code`）；其余端点的 401 由鉴权中间件统一返回 `{"error":"unauthorized","code":"INVALID_TOKEN"}`（见 [§8](#8-错误码)）。
 
 > `session_id` 即 `unified_msg_origin`（`{platform_id}:FriendMessage:{token}`），App 可不关心，仅用于调试。会话与连接解耦：token 绑定会话，SSE 断连重连同 token 即续上。
 
@@ -112,7 +113,7 @@ Accept: text/event-stream
 **响应**：`Content-Type: text/event-stream`，持续推送 SSE 事件（见 [§6](#6-sse-事件类型)）。
 
 **Query 参数**：
-- `since`（可选）：从指定消息 ID **之后**补推漏掉的消息（断连补消息）。App 跟踪收到的最大 id，重连时带上。
+- `since`（可选）：从指定消息 ID **之后**补推漏掉的消息（断连补消息）。**此 ID 是 `platform_message_history` 表的整数行 id**（即 `/history` 返回的 `message_id`，或上次 catchup 回放事件携带的 id）。注意：live 实时 `message` 事件携带的 `message_id` 形如 `botapi_xxx`，**不能**作为 `since`——服务端会以 `int(since)` 解析，传 `botapi_*` 会报错。App 应通过 `/history?since=0` 取得整数游标后再带入 `since`。
 
 **保活**：30 秒无消息推送 `event: ping`，App 忽略即可。
 
@@ -216,11 +217,13 @@ Authorization: Bearer <token>
 
 ### event: error
 
-错误。
+错误。当前仅一种：
 
 ```json
-{ "code": "RATE_LIMITED", "message": "请求过于频繁，请稍后重试" }
+{ "code": "SESSION_KICKED", "message": "管理员已断开此会话" }
 ```
+
+> `SESSION_KICKED` 在管理员于管理页"强制断开"该会话时推送。`RATE_LIMITED` / `PUSH_FAILED` 暂未实现（保留）。
 
 ### event: ping
 
@@ -257,13 +260,12 @@ data: {}
 
 ## 8. 错误码
 
-| HTTP | code | 说明 |
+| HTTP | code / error | 说明 |
 |:--|:--|:--|
-| 401 | `INVALID_TOKEN` | token 无效/被禁用 |
-| 400 | `no_file` | 上传未带文件 |
-| - | `RATE_LIMITED` | 请求过频（SSE error 事件） |
-| - | `SESSION_KICKED` | 管理员强制断开（SSE error 事件） |
-| - | `PUSH_FAILED` | SSE 推送异常 |
+| 401 | `{"error":"invalid_token"}` | `/auth` 专用：token 无效/被禁用（无 code） |
+| 401 | `INVALID_TOKEN` | 其余端点：鉴权中间件返回 `{"error":"unauthorized","code":"INVALID_TOKEN"}` |
+| 400 | `no_file` | `/upload` 未带文件 |
+| - | `SESSION_KICKED` | SSE error 事件：管理员强制断开该会话 |
 
 ---
 
@@ -289,7 +291,7 @@ FID=$(curl -s -X POST $BASE/upload -H "Authorization: Bearer $TOKEN" \
 curl -s -X POST $BASE/message -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" -d "{\"file_ids\":[\"$FID\"]}"
 
-# 5. 断连补消息：记下 final 的 message_id，断开 /stream，重连 ?since=<id>
+# 5. 断连补消息：先用 /history 取整数游标，断开 /stream 后重连 ?since=<整数 id>
 curl -N "$BASE/stream?since=2" -H "Authorization: Bearer $TOKEN"
 
 # 6. 拉历史
@@ -300,5 +302,5 @@ curl -s "$BASE/history?since=0&limit=50" -H "Authorization: Bearer $TOKEN"
 1. 启动 → `POST /auth`。
 2. 开 `GET /stream`（持久），按 §7 聚合事件渲染。
 3. 发消息 → `POST /message`，回复从 /stream 收。
-4. 切后台断开 /stream；回前台重连 `?since=<最大 id>` 补漏。
+4. 切后台断开 /stream；回前台先 `GET /history?since=0` 取最新整数 id，再 `?since=<该 id>` 重连补漏（注意 `since` 是整数行 id，非 `botapi_*`）。
 5. 首次/重装 → `GET /history?since=0` 拉文本历史（媒体不在历史中）。
