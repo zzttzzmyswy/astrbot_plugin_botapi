@@ -1,5 +1,12 @@
 # main.py
+import hashlib
+import json
+import uuid
+
 from astrbot.api.star import Star, Context
+from astrbot.dashboard.routes.route import Response
+from astrbot.core import astrbot_config as _cfg_singleton
+from quart import request
 
 from .adapter import BotApiAdapter  # 触发 @register_platform_adapter 注册到 platform_cls_map
 from .runtime import runtime
@@ -36,25 +43,186 @@ class BotApiStar(Star):
             "清空历史",
         )
 
-    # ── stub handlers (Task 15 替换为真实实现) ──
+    # ── helpers ──
+
+    @staticmethod
+    def _hash_tok(t):
+        return hashlib.sha256(t.encode()).hexdigest()[:16]
+
+    @staticmethod
+    def _preview(t):
+        return f"{t[:8]}...{t[-4:]}" if len(t) > 16 else t
+
+    def _persist_tokens(self, adapter, new_tokens):
+        """改全局 astrbot_config 子树 + 同步运行时副本 + 落盘。"""
+        for p in _cfg_singleton.get("platform", []):
+            if p.get("id") == adapter.config.get("id"):
+                p["tokens"] = list(new_tokens)
+                break
+        adapter.config["tokens"] = list(new_tokens)
+        adapter.cfg.tokens = list(new_tokens)
+        _cfg_singleton.save_config()
+
+    # ── _do_* helpers（纯逻辑，可直接测试）──
+
+    async def _do_stats(self):
+        rt = runtime()
+        adapter = rt.adapter
+        if not adapter:
+            return Response().error("适配器未就绪").__dict__
+        pid = adapter.platform_id
+        per = []
+        for token in adapter.cfg.tokens or []:
+            umo = f"{pid}:FriendMessage:{token}"
+            msg_count = 0
+            try:
+                cid = await rt.conversation_manager.get_curr_conversation_id(umo)
+                if cid:
+                    conv = await rt.conversation_manager.get_conversation(umo, cid)
+                    if conv and conv.history:
+                        msg_count = len(json.loads(conv.history))
+            except Exception:
+                pass
+            per.append({
+                "token_preview": self._preview(token),
+                "token_hash": self._hash_tok(token),
+                "online": bool(adapter._sse_clients.get(token)),
+                "sse_connections": len(adapter._sse_clients.get(token, [])),
+                "message_count": msg_count,
+                "last_active": adapter._last_active.get(token),
+            })
+        return Response().ok({
+            "total_accounts": len(per),
+            "total_online": sum(1 for a in per if a["online"]),
+            "total_messages": sum(a["message_count"] for a in per),
+            "per_account": per,
+        }).__dict__
+
+    async def _do_create(self, token=None):
+        rt = runtime()
+        adapter = rt.adapter
+        if not adapter:
+            return Response().error("适配器未就绪").__dict__
+        token = token or uuid.uuid4().hex[:16]
+        toks = list(adapter.config.get("tokens", []))
+        if token not in toks:
+            toks.append(token)
+            self._persist_tokens(adapter, toks)
+        return Response().ok({"token": token, "message": "账户创建成功"}).__dict__
+
+    async def _do_delete(self, token_hash):
+        rt = runtime()
+        adapter = rt.adapter
+        if not adapter:
+            return Response().error("适配器未就绪").__dict__
+        target = next(
+            (t for t in adapter.config.get("tokens", []) if self._hash_tok(t) == token_hash),
+            None,
+        )
+        if not target:
+            return Response().error("未找到账户").__dict__
+        toks = [t for t in adapter.config.get("tokens", []) if t != target]
+        self._persist_tokens(adapter, toks)
+        for q in adapter._sse_clients.pop(target, []):
+            adapter._put(q, None)
+        if hasattr(adapter, "_token_to_origin"):
+            adapter._token_to_origin.pop(target, None)
+        return Response().ok({"message": "账户已删除"}).__dict__
+
+    async def _do_toggle(self, token_hash, disabled):
+        rt = runtime()
+        adapter = rt.adapter
+        if not adapter:
+            return Response().error("适配器未就绪").__dict__
+        target = next(
+            (t for t in (adapter.cfg.tokens or []) if self._hash_tok(t) == token_hash),
+            None,
+        )
+        if not target:
+            return Response().error("未找到账户").__dict__
+        if disabled:
+            adapter._disabled_tokens.add(target)
+            for q in adapter._sse_clients.pop(target, []):
+                adapter._put(q, None)
+        else:
+            adapter._disabled_tokens.discard(target)
+        return Response().ok({"message": "状态已更新"}).__dict__
+
+    async def _do_disconnect(self, token_hash):
+        rt = runtime()
+        adapter = rt.adapter
+        if not adapter:
+            return Response().error("适配器未就绪").__dict__
+        target = next(
+            (t for t in (adapter.cfg.tokens or []) if self._hash_tok(t) == token_hash),
+            None,
+        )
+        if not target:
+            return Response().error("未找到会话").__dict__
+        from .models import SSEEvent
+
+        for q in adapter._sse_clients.pop(target, []):
+            adapter._put(
+                q,
+                SSEEvent(
+                    "error",
+                    {"code": "SESSION_KICKED", "message": "管理员已断开此会话"},
+                ),
+            )
+        return Response().ok({"message": "会话已断开"}).__dict__
+
+    async def _do_clear(self, token_hash):
+        rt = runtime()
+        adapter = rt.adapter
+        if not adapter:
+            return Response().error("适配器未就绪").__dict__
+        target = next(
+            (t for t in (adapter.cfg.tokens or []) if self._hash_tok(t) == token_hash),
+            None,
+        )
+        if not target:
+            return Response().error("未找到会话").__dict__
+        umo = f"{adapter.platform_id}:FriendMessage:{target}"
+        await rt.conversation_manager.new_conversation(umo)
+        return Response().ok({"message": "历史已清除"}).__dict__
+
+    # ── register_web_api handlers（薄封装：取参→调 _do_*）──
 
     async def _stats(self):
-        raise NotImplementedError("Task 15")
+        return await self._do_stats()
 
     async def _accounts(self):
-        raise NotImplementedError("Task 15")
+        rt = runtime()
+        adapter = rt.adapter
+        if not adapter:
+            return Response().error("适配器未就绪").__dict__
+        accs = [
+            {
+                "token_preview": self._preview(t),
+                "token_hash": self._hash_tok(t),
+                "enabled": t not in adapter._disabled_tokens,
+                "online": bool(adapter._sse_clients.get(t)),
+                "sse_connections": len(adapter._sse_clients.get(t, [])),
+                "last_active": adapter._last_active.get(t),
+            }
+            for t in (adapter.cfg.tokens or [])
+        ]
+        return Response().ok({"accounts": accs, "total": len(accs)}).__dict__
 
     async def _create(self):
-        raise NotImplementedError("Task 15")
+        data = await request.get_json()
+        token = (data or {}).get("token")
+        return await self._do_create(token)
 
     async def _delete(self, token_hash):
-        raise NotImplementedError("Task 15")
+        return await self._do_delete(token_hash)
 
     async def _toggle(self, token_hash):
-        raise NotImplementedError("Task 15")
+        data = await request.get_json()
+        return await self._do_toggle(token_hash, disabled=bool((data or {}).get("disabled")))
 
     async def _disconnect(self, token_hash):
-        raise NotImplementedError("Task 15")
+        return await self._do_disconnect(token_hash)
 
     async def _clear(self, token_hash):
-        raise NotImplementedError("Task 15")
+        return await self._do_clear(token_hash)
