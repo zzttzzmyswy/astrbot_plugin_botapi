@@ -62,10 +62,22 @@ class BotApiAdapter(Platform):
         )
 
     def run(self):
-        # Stub — real impl in Task 13 (run/terminate/send_by_session).
-        # Needed now so the class is concrete (Platform.run is abstract), letting unit tests
-        # instantiate via __new__ on py3.14 without the __abstractmethods__ trick.
-        raise NotImplementedError("run() implemented in Task 13")
+        return self.app.run_task(host=self.cfg.host, port=self.cfg.port,
+                                 shutdown_trigger=self._shutdown.wait)
+
+    async def terminate(self) -> None:
+        self._shutdown.set()
+        for token, queues in list(self._sse_clients.items()):
+            for q in queues:
+                self._put(q, None)
+
+    async def send_by_session(self, session, message_chain) -> None:
+        await super().send_by_session(session, message_chain)
+        token = session.session_id
+        mid = f"botapi_proactive_{uuid.uuid4().hex[:12]}"
+        payload = await self._serializer.serialize_chain(message_chain, None)
+        await self._broadcast_to(token, SSEEvent("message", {**payload, "streaming": False, "final": True}))
+        await self._push_media(message_chain, token, mid)
 
     # ── 非阻塞 SSE 投递（spec §4.2）──
     def _put(self, q: asyncio.Queue, evt):
