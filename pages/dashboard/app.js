@@ -10,7 +10,7 @@ function withTimeout(promise, ms, msg) {
 
 function showStatus(msg) {
   const tbody = document.getElementById("account-list");
-  tbody.innerHTML = `<tr class="empty-row"><td colspan="7">${esc(msg)}</td></tr>`;
+  tbody.innerHTML = `<tr class="empty-row"><td colspan="8">${esc(msg)}</td></tr>`;
 }
 
 async function init() {
@@ -44,16 +44,20 @@ async function refresh() {
 
 function renderAccounts() {
   const tbody = document.getElementById("account-list");
-  if (!accounts.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="7">暂无账户</td></tr>'; return; }
+  if (!accounts.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="8">暂无账户</td></tr>'; return; }
   tbody.innerHTML = accounts.map(a => `
     <tr>
+      <td>${esc(a.nickname || "-")}</td>
       <td><code>${esc(a.token_preview)}</code></td>
       <td><code>${esc(a.token_hash)}</code></td>
       <td><span class="badge ${a.online ? 'badge-online' : 'badge-offline'}">${a.online ? '在线' : '离线'}</span></td>
       <td>${a.message_count ?? 0}</td>
       <td>${a.sse_connections || 0}</td>
       <td>${a.last_active ? new Date(a.last_active * 1000).toLocaleString('zh-CN') : '-'}</td>
-      <td><button class="btn btn-sm btn-danger" onclick="deleteAccount('${esc(a.token_hash)}')">删除</button></td>
+      <td>
+        <button class="btn btn-sm btn-secondary" onclick="setNickname('${esc(a.token_hash)}', '${esc(a.nickname || "")}')">改名</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteAccount('${esc(a.token_hash)}')">删除</button>
+      </td>
     </tr>`).join('');
 }
 
@@ -63,14 +67,26 @@ function setupEventListeners() {
   document.getElementById("btn-refresh").addEventListener("click", refresh);
   document.getElementById("btn-create").addEventListener("click", async () => {
     const token = document.getElementById("input-token").value.trim();
+    const nickname = document.getElementById("input-nickname").value.trim();
     try {
-      await bridge.apiPost("accounts", { token: token || undefined });
+      await bridge.apiPost("accounts", { token: token || undefined, nickname: nickname || undefined });
       document.getElementById("modal-add").classList.add("hidden");
       document.getElementById("input-token").value = "";
+      document.getElementById("input-nickname").value = "";
       await refresh();
     } catch (err) { alert("创建失败: " + (err?.message || err)); }
   });
 }
+
+async function setNickname(tokenHash, current) {
+  const nickname = prompt("设置昵称/备注（留空清除）：", current);
+  if (nickname === null) return;   // 取消
+  try {
+    await bridge.apiPost(`accounts/${tokenHash}/nickname`, { nickname: nickname.trim() });
+    await refresh();
+  } catch (err) { alert("设置失败: " + (err?.message || err)); }
+}
+window.setNickname = setNickname;
 
 async function deleteAccount(tokenHash) {
   if (!confirm(`确定删除 ${tokenHash}？`)) return;

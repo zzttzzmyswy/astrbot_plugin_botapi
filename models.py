@@ -7,6 +7,7 @@ class BotApiConfig:
     host: str = "0.0.0.0"
     port: int = 9000
     tokens: list = field(default_factory=list)
+    nicknames: dict = field(default_factory=dict)   # {token: 昵称}，仅管理展示用，不注入对话
 
 
 @dataclass

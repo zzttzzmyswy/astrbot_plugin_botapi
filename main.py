@@ -25,6 +25,9 @@ class BotApiStar(Star):
         context.register_web_api(f"/{P}/accounts", self._accounts, ["GET"], "账户列表")
         context.register_web_api(f"/{P}/accounts", self._create, ["POST"], "新增账户")
         context.register_web_api(
+            f"/{P}/accounts/<token_hash>/nickname", self._set_nickname, ["POST"], "设置昵称"
+        )
+        context.register_web_api(
             f"/{P}/accounts/<token_hash>/delete", self._delete, ["POST"], "删除账户"
         )
         context.register_web_api(
@@ -53,14 +56,17 @@ class BotApiStar(Star):
     def _preview(t):
         return f"{t[:8]}...{t[-4:]}" if len(t) > 16 else t
 
-    def _persist_tokens(self, adapter, new_tokens):
-        """改全局 astrbot_config 子树 + 同步运行时副本 + 落盘。"""
+    def _persist_account_state(self, adapter, new_tokens, new_nicknames):
+        """改全局 astrbot_config 子树（tokens + nicknames）+ 同步运行时副本 + 落盘。"""
         for p in _cfg_singleton.get("platform", []):
             if p.get("id") == adapter.config.get("id"):
                 p["tokens"] = list(new_tokens)
+                p["nicknames"] = dict(new_nicknames)
                 break
         adapter.config["tokens"] = list(new_tokens)
+        adapter.config["nicknames"] = dict(new_nicknames)
         adapter.cfg.tokens = list(new_tokens)
+        adapter.cfg.nicknames = dict(new_nicknames)
         _cfg_singleton.save_config()
 
     # ── _do_* helpers（纯逻辑，可直接测试）──
@@ -86,6 +92,7 @@ class BotApiStar(Star):
             per.append({
                 "token_preview": self._preview(token),
                 "token_hash": self._hash_tok(token),
+                "nickname": adapter.cfg.nicknames.get(token, ""),
                 "online": bool(adapter._sse_clients.get(token)),
                 "sse_connections": len(adapter._sse_clients.get(token, [])),
                 "message_count": msg_count,
@@ -98,16 +105,23 @@ class BotApiStar(Star):
             "per_account": per,
         }).__dict__
 
-    async def _do_create(self, token=None):
+    async def _do_create(self, token=None, nickname=""):
         rt = runtime()
         adapter = rt.adapter
         if not adapter:
             return Response().error("适配器未就绪").__dict__
         token = token or uuid.uuid4().hex[:16]
         toks = list(adapter.config.get("tokens", []))
+        nicks = dict(adapter.config.get("nicknames", {}))
+        changed = False
         if token not in toks:
             toks.append(token)
-            self._persist_tokens(adapter, toks)
+            changed = True
+        if nickname:
+            nicks[token] = nickname
+            changed = True
+        if changed:
+            self._persist_account_state(adapter, toks, nicks)
         return Response().ok({"token": token, "message": "账户创建成功"}).__dict__
 
     async def _do_delete(self, token_hash):
@@ -122,7 +136,8 @@ class BotApiStar(Star):
         if not target:
             return Response().error("未找到账户").__dict__
         toks = [t for t in adapter.config.get("tokens", []) if t != target]
-        self._persist_tokens(adapter, toks)
+        nicks = {k: v for k, v in adapter.config.get("nicknames", {}).items() if k != target}
+        self._persist_account_state(adapter, toks, nicks)
         for q in adapter._sse_clients.pop(target, []):
             adapter._put(q, None)
         if hasattr(adapter, "_token_to_origin"):
@@ -186,6 +201,25 @@ class BotApiStar(Star):
         await rt.conversation_manager.new_conversation(umo)
         return Response().ok({"message": "历史已清除"}).__dict__
 
+    async def _do_set_nickname(self, token_hash, nickname):
+        rt = runtime()
+        adapter = rt.adapter
+        if not adapter:
+            return Response().error("适配器未就绪").__dict__
+        target = next(
+            (t for t in (adapter.cfg.tokens or []) if self._hash_tok(t) == token_hash),
+            None,
+        )
+        if not target:
+            return Response().error("未找到账户").__dict__
+        nicks = dict(adapter.config.get("nicknames", {}))
+        if nickname:
+            nicks[target] = nickname
+        else:
+            nicks.pop(target, None)   # 空昵称=清除
+        self._persist_account_state(adapter, list(adapter.config.get("tokens", [])), nicks)
+        return Response().ok({"message": "昵称已更新"}).__dict__
+
     # ── register_web_api handlers（薄封装：取参→调 _do_*）──
 
     async def _stats(self):
@@ -200,6 +234,7 @@ class BotApiStar(Star):
             {
                 "token_preview": self._preview(t),
                 "token_hash": self._hash_tok(t),
+                "nickname": adapter.cfg.nicknames.get(t, ""),
                 "enabled": t not in adapter._disabled_tokens,
                 "online": bool(adapter._sse_clients.get(t)),
                 "sse_connections": len(adapter._sse_clients.get(t, [])),
@@ -212,7 +247,13 @@ class BotApiStar(Star):
     async def _create(self):
         data = await request.get_json()
         token = (data or {}).get("token")
-        return await self._do_create(token)
+        nickname = (data or {}).get("nickname", "")
+        return await self._do_create(token, nickname)
+
+    async def _set_nickname(self, token_hash):
+        data = await request.get_json()
+        nickname = (data or {}).get("nickname", "")
+        return await self._do_set_nickname(token_hash, nickname)
 
     async def _delete(self, token_hash):
         return await self._do_delete(token_hash)

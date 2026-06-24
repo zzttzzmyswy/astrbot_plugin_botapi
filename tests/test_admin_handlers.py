@@ -34,12 +34,13 @@ def _fake_context():
     return FakeContext(), registered
 
 
-def _make_star(monkeypatch, tokens=None, platforms=None):
+def _make_star(monkeypatch, tokens=None, platforms=None, nicknames=None):
     ctx, registered = _fake_context()
     star = BotApiStar(ctx, None)
+    nicks = dict(nicknames or {})
     adapter = SimpleNamespace(
-        cfg=SimpleNamespace(tokens=list(tokens or [])),
-        config={"id": "botapi", "tokens": list(tokens or [])},
+        cfg=SimpleNamespace(tokens=list(tokens or []), nicknames=dict(nicks)),
+        config={"id": "botapi", "tokens": list(tokens or []), "nicknames": dict(nicks)},
         platform_id="botapi",
         _sse_clients={},
         _disabled_tokens=set(),
@@ -52,7 +53,14 @@ def _make_star(monkeypatch, tokens=None, platforms=None):
     rt.adapter = adapter
     fake_cfg = {
         "platform": list(
-            platforms or [{"id": "botapi", "tokens": list(tokens or [])}]
+            platforms
+            or [
+                {
+                    "id": "botapi",
+                    "tokens": list(tokens or []),
+                    "nicknames": dict(nicks),
+                }
+            ]
         )
     }
 
@@ -112,3 +120,45 @@ async def test_stats_envelope(monkeypatch):
     result = await star._do_stats()
     assert result["status"] == "ok"
     assert result["data"]["total_accounts"] == 2
+
+
+@pytest.mark.asyncio
+async def test_create_with_nickname(monkeypatch):
+    star, adapter, fake_cfg, _ = _make_star(monkeypatch, tokens=[])
+    res = await star._do_create("tok", "张三的Bot")
+    assert res["status"] == "ok"
+    assert adapter.cfg.nicknames.get("tok") == "张三的Bot"
+    assert adapter.config["nicknames"]["tok"] == "张三的Bot"
+    assert fake_cfg["platform"][0]["nicknames"]["tok"] == "张三的Bot"
+    assert fake_cfg.get("_saved") is True
+
+
+@pytest.mark.asyncio
+async def test_set_nickname(monkeypatch):
+    star, adapter, fake_cfg, _ = _make_star(monkeypatch, tokens=["a"])
+    await star._do_set_nickname(_hash("a"), "新昵称")
+    assert adapter.cfg.nicknames.get("a") == "新昵称"
+    assert fake_cfg["platform"][0]["nicknames"]["a"] == "新昵称"
+    # 空昵称=清除
+    await star._do_set_nickname(_hash("a"), "")
+    assert "a" not in adapter.cfg.nicknames
+
+
+@pytest.mark.asyncio
+async def test_delete_removes_nickname(monkeypatch):
+    star, adapter, fake_cfg, _ = _make_star(
+        monkeypatch, tokens=["a"], nicknames={"a": "要被删的"}
+    )
+    await star._do_delete(_hash("a"))
+    assert "a" not in adapter.cfg.nicknames
+    assert "a" not in adapter.config["nicknames"]
+
+
+@pytest.mark.asyncio
+async def test_stats_includes_nickname(monkeypatch):
+    star, adapter, fake_cfg, _ = _make_star(
+        monkeypatch, tokens=["a"], nicknames={"a": "Alice"}
+    )
+    result = await star._do_stats()
+    per = result["data"]["per_account"]
+    assert per[0]["nickname"] == "Alice"
