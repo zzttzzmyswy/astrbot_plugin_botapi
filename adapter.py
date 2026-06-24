@@ -45,7 +45,11 @@ class BotApiAdapter(Platform):
         self._media_enabled = bool(astrbot_config.get("callback_api_base"))
         self._serializer = MessageSerializer(_media_enabled=self._media_enabled)
         runtime().adapter = self
-        # self._setup_routes()  # 在 Task 9+ 引入 routes 后启用
+        from quart import Quart
+        self.app = Quart("astrbot_plugin_botapi")
+        from .routes import _setup_routes
+        self._setup_routes = lambda: _setup_routes(self)
+        self._setup_routes()
 
     def meta(self) -> PlatformMetadata:
         return PlatformMetadata(
