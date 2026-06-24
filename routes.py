@@ -1,4 +1,5 @@
 # routes.py
+import asyncio
 import time
 import uuid
 
@@ -7,7 +8,8 @@ from astrbot.api.message_components import Image, Record, File, Plain
 from quart import jsonify, request
 
 from .event import BotApiMessageEvent
-from .history import persist_inbound_text
+from .history import persist_inbound_text, catchup_events
+from .models import SSEEvent
 
 
 def _setup_routes(adapter):
@@ -80,6 +82,43 @@ def _setup_routes(adapter):
                 "size": save_path.stat().st_size}
         adapter._uploaded_files[file_id] = {**info, "path": str(save_path)}
         return jsonify(info)
+
+    @app.get("/api/v1/botapi/stream")
+    async def stream():
+        from quart import make_response
+        token = _extract_token(adapter)
+        q: asyncio.Queue = asyncio.Queue(maxsize=256)
+        adapter._sse_clients[token].append(q)
+        since = request.args.get("since")
+
+        resp = await make_response(_stream_gen(adapter, token, q, since), {
+            "Content-Type": "text/event-stream", "Cache-Control": "no-cache",
+            "Connection": "keep-alive", "Transfer-Encoding": "chunked",
+            "X-Accel-Buffering": "no",
+        })
+        resp.timeout = None
+        return resp
+
+
+async def _stream_gen(adapter, token, q, since):
+    try:
+        if since:
+            for evt in await catchup_events(adapter.platform_id, token, since):
+                yield evt.to_sse()
+        while True:
+            try:
+                item = await asyncio.wait_for(q.get(), timeout=30)
+            except asyncio.TimeoutError:
+                yield SSEEvent.ping().to_sse()
+                continue
+            if item is None:
+                break
+            yield item.to_sse()
+    except asyncio.CancelledError:
+        pass
+    finally:
+        if q in adapter._sse_clients.get(token, []):
+            adapter._sse_clients[token].remove(q)
 
 
 def _extract_token(adapter):
