@@ -34,6 +34,17 @@ def test_row_to_sse_final():
     assert isinstance(m["timestamp"], int)
 
 
+def test_row_to_sse_naive_utc_timestamp():
+    """SQLite 读回的 created_at 是 naive(丢了 +00:00)。row_to_sse 须按 UTC 解释,
+    否则在非 UTC 服务器上 .timestamp() 会偏一个时区(北京服务器早 8h)。"""
+    aware = datetime(2026, 6, 24, 12, 0, 0, tzinfo=timezone.utc)
+    naive = aware.replace(tzinfo=None)  # 模拟 SQLite 读回
+    r_aware = SimpleNamespace(id=1, content={"kind": "final", "text": "x", "role": "assistant"}, created_at=aware)
+    r_naive = SimpleNamespace(id=1, content={"kind": "final", "text": "x", "role": "assistant"}, created_at=naive)
+    assert history.row_to_sse(r_aware)["timestamp"] == history.row_to_sse(r_naive)["timestamp"]
+    assert history.row_to_sse(r_naive)["timestamp"] == int(aware.timestamp())
+
+
 def test_row_to_sse_thinking():
     r = _row(5, "thinking", "reasoning...")
     assert history.row_to_sse(r)["type"] == "thinking"

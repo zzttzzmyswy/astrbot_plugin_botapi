@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-06-25
+
+### Fixed
+
+- 历史消息时间戳早一个时区：`row_to_sse` 的 `int(row.created_at.timestamp())` 对 SQLite 读回的 naive datetime（`PlatformMessageHistory.created_at` 按 UTC 存但落库丢 `+00:00`）按服务器本地时区解释，导致非 UTC 服务器上 `/history` 与 `/stream` catchup 的 `timestamp` 偏一个时区（北京服务器早 8h）。改为 naive 时显式补 UTC。
+
 ## [1.1.3] - 2026-06-25
 
 ### Added

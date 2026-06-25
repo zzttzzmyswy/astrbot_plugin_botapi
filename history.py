@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .runtime import runtime
 from .models import SSEEvent
@@ -7,12 +7,18 @@ from .models import SSEEvent
 def row_to_sse(row):
     c = row.content or {}
     kind = c.get("kind")
+    # created_at 在 model 里按 datetime.now(timezone.utc) 存(TZ-aware UTC),但 SQLite
+    # 存成 naive 字符串(丢了 +00:00),读回为 naive。若直接 .timestamp() 会按服务器
+    # 本地时区解释 → 比真实 UTC 偏一个时区(北京服务器早 8h)。故 naive 时显式补 UTC。
+    ca = row.created_at
+    if ca.tzinfo is None:
+        ca = ca.replace(tzinfo=timezone.utc)
     return {
         "message_id": str(row.id),
         "role": c.get("role", "assistant"),
         "type": {"final": "text", "thinking": "thinking", "tool_status": "tool_status"}.get(kind, "text"),
         "content": c.get("text", ""),
-        "timestamp": int(row.created_at.timestamp()),
+        "timestamp": int(ca.timestamp()),
     }
 
 
