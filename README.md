@@ -138,7 +138,7 @@ git clone https://github.com/zzttzzmyswy/astrbot_plugin_botapi.git
 cd astrbot_plugin_botapi
 python -m venv .venv --system-site-packages   # 继承系统 astrbot 依赖
 .venv/bin/pip install pytest-asyncio
-.venv/bin/python -m pytest -q                  # 62 个测试
+.venv/bin/python -m pytest -q                  # 75 个测试
 ```
 
 ## License
