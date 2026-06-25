@@ -5,12 +5,17 @@
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-06-25
+
+### Fixed
+
+- 兼容 AstrBot 4.26.0：`astrbot.dashboard.routes.route.Response` 已移除，4.26 改用 `astrbot.dashboard.responses` 的 `ok()`/`error()` 函数。`main.py` 加兼容 shim（4.26+ 走新函数、4.25.x 回退旧类），调用形式不变，故 `astrbot_version` 维持 `>=4.25.5`。
+
 ## [1.1.4] - 2026-06-25
 
 ### Fixed
 
 - 历史消息时间戳早一个时区：`row_to_sse` 的 `int(row.created_at.timestamp())` 对 SQLite 读回的 naive datetime（`PlatformMessageHistory.created_at` 按 UTC 存但落库丢 `+00:00`）按服务器本地时区解释，导致非 UTC 服务器上 `/history` 与 `/stream` catchup 的 `timestamp` 偏一个时区（北京服务器早 8h）。改为 naive 时显式补 UTC。
-- 兼容 AstrBot 4.26.0：`astrbot.dashboard.routes.route.Response` 已移除，4.26 改用 `astrbot.dashboard.responses` 的 `ok()`/`error()` 函数。`main.py` 加兼容 shim（4.26+ 走新函数、4.25.x 回退旧类），调用形式不变，故 `astrbot_version` 维持 `>=4.25.5`。
 
 ## [1.1.3] - 2026-06-25
 
@@ -55,7 +60,9 @@
 - BotAPI 适配器插件首个可用版本：`/auth` `/message` `/upload` `/stream` `/history` 五端点，纯 SSE 回复，逐 token 流式，断连重连自动补消息，多账户隔离，Dashboard 管理页。
 - 完整手机端 API 文档 `docs/API.md`。
 
-[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v1.1.3...HEAD
+[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v1.1.5...HEAD
+[1.1.5]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.1.5
+[1.1.4]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.1.4
 [1.1.3]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.1.3
 [1.1.2]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.1.2
 [1.1.1]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.1.1
