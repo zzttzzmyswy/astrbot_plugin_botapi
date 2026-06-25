@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-06-25
+
+### Added
+
+- 管理页历史记录导出：Markdown / JSON 两种格式，完整历史无条数上限（分页累加），Blob 下载。
+
 ## [1.1.2] - 2026-06-24
 
 ### Changed
@@ -42,7 +48,8 @@
 - BotAPI 适配器插件首个可用版本：`/auth` `/message` `/upload` `/stream` `/history` 五端点，纯 SSE 回复，逐 token 流式，断连重连自动补消息，多账户隔离，Dashboard 管理页。
 - 完整手机端 API 文档 `docs/API.md`。
 
-[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.1.3
 [1.1.2]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.1.2
 [1.1.1]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.1.1
 [1.1.0]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.1.0

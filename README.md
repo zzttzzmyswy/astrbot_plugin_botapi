@@ -88,6 +88,7 @@ WebUI「机器人/平台」编辑 botapi 实例：
 WebUI → 插件管理 → `astrbot_plugin_botapi` → **Dashboard**：
 - 账户列表（昵称 / Token 预览 / hash / 在线 / 消息数 / SSE 连接数 / 最后活跃）
 - 新增账户（可填昵称 + 自动生成 token）
+- 导出对话记录（Markdown / JSON，完整历史无条数上限，Blob 下载）
 - 改名 / 删除 / 强制断开 / 清空历史
 - 统计卡片（总账户 / 在线 / 总消息数）
 
