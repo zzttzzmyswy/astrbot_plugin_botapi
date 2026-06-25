@@ -61,6 +61,19 @@
       </div>
     </div>
 
+    <!-- 导出对话记录 -->
+    <div id="modal-export" class="modal hidden">
+      <div class="modal-content">
+        <h3>导出对话记录</h3>
+        <p id="export-msg" class="confirm-msg">选择导出格式（完整历史，无条数上限）：</p>
+        <div class="modal-actions">
+          <button id="btn-export-md" class="btn btn-primary">Markdown</button>
+          <button id="btn-export-json" class="btn btn-secondary">JSON</button>
+          <button id="btn-export-cancel" class="btn btn-secondary">取消</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 提示（替代 alert） -->
     <div id="toast" class="toast hidden"></div>
   </div>

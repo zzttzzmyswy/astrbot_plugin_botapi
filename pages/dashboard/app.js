@@ -97,6 +97,7 @@ function renderAccounts() {
       <td>${a.sse_connections || 0}</td>
       <td>${a.last_active ? new Date(a.last_active * 1000).toLocaleString('zh-CN') : '-'}</td>
       <td>
+        <button class="btn btn-sm btn-secondary" data-action="export" data-hash="${esc(a.token_hash)}" data-nickname="${esc(a.nickname || "")}">导出</button>
         <button class="btn btn-sm btn-secondary" data-action="nickname" data-hash="${esc(a.token_hash)}" data-nickname="${esc(a.nickname || "")}">改名</button>
         <button class="btn btn-sm btn-danger" data-action="delete" data-hash="${esc(a.token_hash)}">删除</button>
       </td>
@@ -112,6 +113,7 @@ function wireDelegation() {
     const nick = btn.dataset.nickname || "";
     if (action === "nickname") await setNickname(hash, nick);
     else if (action === "delete") await deleteAccount(hash);
+    else if (action === "export") openExport(hash, nick);
   });
 }
 
@@ -132,6 +134,41 @@ function setupToolbar() {
       await refresh();
     } catch (err) { toast("创建失败: " + (err?.message || err)); }
   });
+  // 导出模态
+  document.getElementById("btn-export-cancel").addEventListener("click", () =>
+    document.getElementById("modal-export").classList.add("hidden"));
+  document.getElementById("btn-export-md").addEventListener("click", () =>
+    doExport(exportTarget.hash, "md"));
+  document.getElementById("btn-export-json").addEventListener("click", () =>
+    doExport(exportTarget.hash, "json"));
+}
+
+let exportTarget = { hash: "", nickname: "" };
+
+function openExport(tokenHash, nickname) {
+  exportTarget = { hash: tokenHash, nickname: nickname || "" };
+  document.getElementById("export-msg").textContent =
+    `导出「${nickname || tokenHash}」的完整对话记录，选择格式（无条数上限）：`;
+  document.getElementById("modal-export").classList.remove("hidden");
+}
+
+async function doExport(tokenHash, fmt) {
+  try {
+    const res = await bridge.apiPost(`accounts/${tokenHash}/export`, { format: fmt });
+    const blob = new Blob([res.content], { type: res.mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = res.filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    document.getElementById("modal-export").classList.add("hidden");
+    toast(`已导出 ${res.filename}`);
+  } catch (err) {
+    toast("导出失败: " + (err?.message || err));
+  }
 }
 
 async function setNickname(tokenHash, current) {
