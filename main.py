@@ -5,9 +5,40 @@ import uuid
 from datetime import datetime
 
 from astrbot.api.star import Star, Context
-from astrbot.dashboard.routes.route import Response
 from astrbot.core import astrbot_config as _cfg_singleton
 from quart import request
+
+# AstrBot 4.26 把 Response 类（astrbot.dashboard.routes.route）改为
+# astrbot.dashboard.responses 的模块级 ok()/error() 函数。这里做兼容 shim，
+# 4.26+ 走新函数、4.25.x 回退旧类，调用点仍沿用 Response().ok(...).__dict__ 形式。
+try:
+    from astrbot.dashboard.responses import ok as _ok_fn, error as _error_fn
+    _RESP_NEW = True
+except ImportError:  # 4.25.x
+    from astrbot.dashboard.routes.route import Response as _OldResponse
+    _RESP_NEW = False
+
+
+class _RespObj:
+    """把 dict 包成对象，使其 __dict__ == 该 dict（模拟旧 Response 实例的 .__dict__）。"""
+    def __init__(self, d):
+        self.__dict__.update(d)
+
+
+class Response:
+    if _RESP_NEW:
+        def ok(self, data=None, message=None):
+            return _RespObj(_ok_fn(data, message))
+
+        def error(self, message, data=None):
+            return _RespObj(_error_fn(message, data))
+    else:
+        def ok(self, data=None, message=None):
+            return _OldResponse().ok(data, message)
+
+        def error(self, message, data=None):
+            return _OldResponse().error(message)
+
 
 from .adapter import BotApiAdapter  # 触发 @register_platform_adapter 注册到 platform_cls_map
 from .runtime import runtime
