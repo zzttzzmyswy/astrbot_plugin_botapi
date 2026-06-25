@@ -2,6 +2,7 @@
 import hashlib
 import json
 import uuid
+from datetime import datetime
 
 from astrbot.api.star import Star, Context
 from astrbot.dashboard.routes.route import Response
@@ -44,6 +45,9 @@ class BotApiStar(Star):
             self._clear,
             ["POST"],
             "清空历史",
+        )
+        context.register_web_api(
+            f"/{P}/accounts/<token_hash>/export", self._export, ["POST"], "导出历史"
         )
 
     # ── helpers ──
@@ -220,6 +224,42 @@ class BotApiStar(Star):
         self._persist_account_state(adapter, list(adapter.config.get("tokens", [])), nicks)
         return Response().ok({"message": "昵称已更新"}).__dict__
 
+    async def _do_export(self, token_hash, fmt):
+        rt = runtime()
+        adapter = rt.adapter
+        if not adapter:
+            return Response().error("适配器未就绪").__dict__
+        target = next(
+            (t for t in (adapter.cfg.tokens or []) if self._hash_tok(t) == token_hash),
+            None,
+        )
+        if not target:
+            return Response().error("未找到账户").__dict__
+        from .history import get_export_rows, to_markdown
+        rows = await get_export_rows(adapter.platform_id, target)
+        meta = {
+            "nickname": adapter.cfg.nicknames.get(target, ""),
+            "token_preview": self._preview(target),
+            "exported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "count": len(rows),
+        }
+        safe_title = meta["nickname"] or meta["token_preview"] or target[:8]
+        if fmt == "json":
+            content = json.dumps(rows, ensure_ascii=False, indent=2)
+            return Response().ok({
+                "content": content,
+                "filename": f"botapi-history-{safe_title}.json",
+                "mime": "application/json",
+            }).__dict__
+        if fmt == "md":
+            content = to_markdown(rows, meta)
+            return Response().ok({
+                "content": content,
+                "filename": f"botapi-history-{safe_title}.md",
+                "mime": "text/markdown",
+            }).__dict__
+        return Response().error("不支持的格式，可选 md 或 json").__dict__
+
     # ── register_web_api handlers（薄封装：取参→调 _do_*）──
 
     async def _stats(self):
@@ -267,3 +307,8 @@ class BotApiStar(Star):
 
     async def _clear(self, token_hash):
         return await self._do_clear(token_hash)
+
+    async def _export(self, token_hash):
+        data = await request.get_json()
+        fmt = (data or {}).get("format", "md")
+        return await self._do_export(token_hash, fmt)

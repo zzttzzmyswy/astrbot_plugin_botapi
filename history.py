@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from .runtime import runtime
 from .models import SSEEvent
 
@@ -68,3 +70,69 @@ async def persist_assistant_thinking(token, message_id, text):
         return
     await _insert({"role": "assistant", "kind": "thinking", "text": text, "message_id": message_id},
                   token, "bot", "BotAPI")
+
+
+# ── 导出（无上限：分页累加 + 按 id 升序）──
+
+async def get_export_rows(platform_id, token, page_size=500):
+    """取某账户全部历史行（row_to_sse 形态），分页累加直至某页 < page_size，
+    按 row.id 升序排列。无条数上限。"""
+    rt = runtime()
+    mgr = rt.message_history_manager
+    if not mgr:
+        return []
+    all_rows = []
+    page = 1
+    while True:
+        rows = await mgr.get(platform_id=platform_id, user_id=token,
+                             page=page, page_size=page_size)
+        all_rows.extend(rows)
+        if len(rows) < page_size:
+            break
+        page += 1
+    all_rows.sort(key=lambda r: r.id)
+    return [row_to_sse(r) for r in all_rows]
+
+
+def _fmt_ts(ts) -> str:
+    if not ts:
+        return ""
+    try:
+        return datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return str(ts)
+
+
+def to_markdown(rows: list, meta: dict) -> str:
+    """把 row_to_sse 结果渲染为 Markdown。纯函数（不读时间，meta 由调用方注入）。"""
+    nickname = meta.get("nickname") or ""
+    token_preview = meta.get("token_preview") or ""
+    exported_at = meta.get("exported_at", "")
+    title = nickname or token_preview or "未知账户"
+
+    lines = [f"# BotAPI 对话记录 — {title}", ""]
+    if token_preview:
+        lines.append(f"> 账户：{nickname or '（无昵称）'} (`{token_preview}`)")
+    else:
+        lines.append(f"> 账户：{nickname or '（无昵称）'}")
+    lines.append(f"> 导出时间：{exported_at}")
+    lines.append(f"> 消息数：{len(rows)}")
+    lines += ["", "---", ""]
+
+    for r in rows:
+        ts = _fmt_ts(r.get("timestamp"))
+        role = r.get("role")
+        typ = r.get("type")
+        content = r.get("content", "") or ""
+        if role == "user":
+            lines += [f"## 👤 用户  · {ts}", "", content]
+        elif typ == "thinking":
+            lines += [f"<details><summary>💭 思考  · {ts}</summary>", "", content, "", "</details>"]
+        elif typ == "tool_status":
+            quoted = content.replace("\n", "\n> ")
+            lines += [f"> 🔨 工具状态  · {ts}", f"> {quoted}"]
+        else:   # assistant text
+            lines += [f"## 🤖 助手  · {ts}", "", content]
+        lines += ["", "---", ""]
+
+    return "\n".join(lines).rstrip() + "\n"
