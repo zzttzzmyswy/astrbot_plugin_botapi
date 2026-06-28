@@ -55,6 +55,7 @@ function toast(msg) {
 
 async function init() {
   setupToolbar();
+  setupChat();
   wireDelegation();
   if (!bridge) { showStatus("Bridge 未就绪（请在 WebUI 插件页内打开此页面）"); log("no bridge"); return; }
   try {
@@ -97,6 +98,7 @@ function renderAccounts() {
       <td>${a.sse_connections || 0}</td>
       <td>${a.last_active ? new Date(a.last_active * 1000).toLocaleString('zh-CN') : '-'}</td>
       <td>
+        <button class="btn btn-sm btn-primary" data-action="chat" data-hash="${esc(a.token_hash)}" data-nickname="${esc(a.nickname || "")}">对话</button>
         <button class="btn btn-sm btn-secondary" data-action="export" data-hash="${esc(a.token_hash)}" data-nickname="${esc(a.nickname || "")}">导出</button>
         <button class="btn btn-sm btn-secondary" data-action="nickname" data-hash="${esc(a.token_hash)}" data-nickname="${esc(a.nickname || "")}">改名</button>
         <button class="btn btn-sm btn-danger" data-action="delete" data-hash="${esc(a.token_hash)}">删除</button>
@@ -114,6 +116,7 @@ function wireDelegation() {
     if (action === "nickname") await setNickname(hash, nick);
     else if (action === "delete") await deleteAccount(hash);
     else if (action === "export") openExport(hash, nick);
+    else if (action === "chat") openChat(hash, nick);
   });
 }
 
@@ -189,6 +192,116 @@ async function deleteAccount(tokenHash) {
 }
 
 function esc(s) { const d = document.createElement("div"); d.textContent = String(s ?? ""); return d.innerHTML; }
+
+// ── 整页对话（admin 以 token 身份在同一会话发话，轮询历史收回复）──
+
+const chat = { hash: "", nick: "", maxId: 0, timer: null, active: false };
+
+function openChat(tokenHash, nickname) {
+  chat.hash = tokenHash;
+  chat.nick = nickname || tokenHash;
+  chat.maxId = 0;
+  chat.active = true;
+  document.getElementById("main-view").classList.add("hidden");
+  document.getElementById("chat-view").classList.remove("hidden");
+  document.getElementById("chat-title").textContent = `对话：${chat.nick}`;
+  document.getElementById("chat-messages").innerHTML = "";
+  loadHistory();
+  startPoll();
+}
+
+function closeChat() {
+  chat.active = false;
+  stopPoll();
+  document.getElementById("chat-view").classList.add("hidden");
+  document.getElementById("main-view").classList.remove("hidden");
+}
+
+async function loadHistory() {
+  try {
+    const res = await bridge.apiGet(`sessions/${chat.hash}/history?limit=50`);
+    const msgs = res.messages || [];
+    msgs.forEach(appendBubble);
+    if (msgs.length) {
+      chat.maxId = Math.max(...msgs.map((m) => parseInt(m.message_id) || 0));
+      scrollChatBottom();
+    }
+  } catch (err) { toast("加载历史失败: " + (err?.message || err)); }
+}
+
+async function pollOnce() {
+  if (!chat.active) return;
+  try {
+    const res = await bridge.apiGet(`sessions/${chat.hash}/history?since=${chat.maxId}`);
+    const msgs = res.messages || [];
+    if (msgs.length) {
+      msgs.forEach(appendBubble);
+      chat.maxId = Math.max(chat.maxId, ...msgs.map((m) => parseInt(m.message_id) || 0));
+      scrollChatBottom();
+    }
+  } catch (err) { log("poll fail", err); }   // 单次失败静默，下个周期重试
+}
+
+function startPoll() {
+  stopPoll();
+  const tick = async () => {
+    if (!chat.active) return;
+    if (!document.hidden) await pollOnce();
+    chat.timer = setTimeout(tick, 1200);
+  };
+  chat.timer = setTimeout(tick, 1200);
+}
+
+function stopPoll() {
+  if (chat.timer) { clearTimeout(chat.timer); chat.timer = null; }
+}
+
+async function sendChat() {
+  const ta = document.getElementById("chat-input");
+  const text = ta.value.trim();
+  if (!text) return;
+  ta.value = "";
+  ta.style.height = "auto";
+  try {
+    await bridge.apiPost(`sessions/${chat.hash}/chat`, { text });
+    await pollOnce();   // 立即拉一次，用户行 ~1s 内回显
+  } catch (err) { toast("发送失败: " + (err?.message || err)); }
+}
+
+function appendBubble(m) {
+  const box = document.getElementById("chat-messages");
+  const ts = m.timestamp ? new Date(m.timestamp * 1000).toLocaleTimeString("zh-CN") : "";
+  const role = m.role, typ = m.type;
+  let html;
+  if (role === "user") {
+    html = `<div class="bubble bubble-user"><div>${esc(m.content || "")}</div><div class="bubble-meta">${esc(ts)}</div></div>`;
+  } else if (typ === "thinking") {
+    html = `<details class="bubble bubble-thinking"><summary>💭 思考 · ${esc(ts)}</summary><div class="bubble-thinking-body">${esc(m.content || "")}</div></details>`;
+  } else if (typ === "tool_status") {
+    html = `<div class="bubble bubble-tool">🔨 ${esc(m.content || "")}</div>`;
+  } else {
+    html = `<div class="bubble bubble-bot"><div>${esc(m.content || "")}</div><div class="bubble-meta">${esc(ts)}</div></div>`;
+  }
+  box.insertAdjacentHTML("beforeend", html);
+}
+
+function scrollChatBottom() {
+  const box = document.getElementById("chat-messages");
+  box.scrollTop = box.scrollHeight;
+}
+
+function setupChat() {
+  document.getElementById("btn-chat-back").addEventListener("click", closeChat);
+  document.getElementById("btn-chat-send").addEventListener("click", sendChat);
+  const ta = document.getElementById("chat-input");
+  ta.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+  });
+  ta.addEventListener("input", () => {
+    ta.style.height = "auto";
+    ta.style.height = Math.min(ta.scrollHeight, 120) + "px";
+  });
+}
 
 init();
 log("app.js loaded");

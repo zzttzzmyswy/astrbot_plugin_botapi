@@ -8,21 +8,36 @@
 </head>
 <body>
   <div id="app">
-    <div class="stats-row">
-      <div class="stat-card"><span class="stat-value" id="total-accounts">-</span><span class="stat-label">总账户</span></div>
-      <div class="stat-card online"><span class="stat-value" id="online-count">-</span><span class="stat-label">在线</span></div>
-      <div class="stat-card"><span class="stat-value" id="total-messages">-</span><span class="stat-label">总消息数</span></div>
-    </div>
-    <div class="toolbar">
-      <button id="btn-add" class="btn btn-primary">+ 新增账户</button>
-      <button id="btn-refresh" class="btn btn-secondary">刷新</button>
-    </div>
-    <div class="table-container">
-      <table>
-        <thead><tr><th>昵称</th><th>Token</th><th>ID(hash)</th><th>状态</th><th>消息</th><th>SSE</th><th>最后活跃</th><th>操作</th></tr></thead>
-        <tbody id="account-list"><tr class="empty-row"><td colspan="8">加载中...</td></tr></tbody>
-      </table>
-    </div>
+    <section id="main-view">
+      <div class="stats-row">
+        <div class="stat-card"><span class="stat-value" id="total-accounts">-</span><span class="stat-label">总账户</span></div>
+        <div class="stat-card online"><span class="stat-value" id="online-count">-</span><span class="stat-label">在线</span></div>
+        <div class="stat-card"><span class="stat-value" id="total-messages">-</span><span class="stat-label">总消息数</span></div>
+      </div>
+      <div class="toolbar">
+        <button id="btn-add" class="btn btn-primary">+ 新增账户</button>
+        <button id="btn-refresh" class="btn btn-secondary">刷新</button>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead><tr><th>昵称</th><th>Token</th><th>ID(hash)</th><th>状态</th><th>消息</th><th>SSE</th><th>最后活跃</th><th>操作</th></tr></thead>
+          <tbody id="account-list"><tr class="empty-row"><td colspan="8">加载中...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 整页对话视图 -->
+    <section id="chat-view" class="hidden">
+      <div class="chat-header">
+        <button id="btn-chat-back" class="btn btn-sm btn-secondary">← 返回</button>
+        <span id="chat-title" class="chat-title">对话</span>
+      </div>
+      <div id="chat-messages" class="chat-messages"></div>
+      <div class="chat-input-row">
+        <textarea id="chat-input" rows="1" placeholder="输入消息...（Enter 发送，Shift+Enter 换行）"></textarea>
+        <button id="btn-chat-send" class="btn btn-primary">发送</button>
+      </div>
+    </section>
 
     <!-- 新增账户 -->
     <div id="modal-add" class="modal hidden">
