@@ -315,7 +315,18 @@ class BotApiStar(Star):
         from .routes import submit_inbound
 
         message_id = await submit_inbound(adapter, target, text)
-        return Response().ok({"message_id": message_id}).__dict__
+        # 诊断（v1.2.4）：查 submit_inbound 是否真把用户消息写进 platform_message_history
+        from .history import get_history as _gh
+        _rows, _ = await _gh(adapter.platform_id, target, None, 200)
+        return Response().ok({
+            "message_id": message_id,
+            "_diag": {
+                "platform_id": adapter.platform_id,
+                "target": target,
+                "mgr_set": bool(rt.message_history_manager),
+                "rows_after_send": len(_rows),
+            },
+        }).__dict__
 
     async def _do_history(self, token_hash, since=None, limit=50):
         """管理页拉某账户会话历史（轮询用 since=最大行 id 取增量）。复用 history.get_history。"""
@@ -333,7 +344,15 @@ class BotApiStar(Star):
 
         limit = min(int(limit), 200) if limit else 50
         msgs, has_more = await get_history(adapter.platform_id, target, since, limit)
-        return Response().ok({"messages": msgs, "has_more": has_more}).__dict__
+        return Response().ok({
+            "messages": msgs, "has_more": has_more,
+            "_diag": {
+                "platform_id": adapter.platform_id,
+                "target": target,
+                "mgr_set": bool(rt.message_history_manager),
+                "since": since, "limit": limit,
+            },
+        }).__dict__
 
     # ── register_web_api handlers（薄封装：取参→调 _do_*）──
 

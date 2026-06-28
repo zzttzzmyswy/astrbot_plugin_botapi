@@ -84,7 +84,11 @@ async def test_do_chat_happy(monkeypatch):
         assert token == "t1" and text == "你好"
         return "botapi_xxx"
 
+    async def fake_get(pid, tok, since, limit):
+        return [], False
+
     monkeypatch.setattr("astrbot_plugin_botapi.routes.submit_inbound", fake_submit)
+    monkeypatch.setattr("astrbot_plugin_botapi.history.get_history", fake_get)
     res = await s._do_chat(_hash("t1"), "你好")
     assert res["status"] == "ok"
     assert res["data"]["message_id"] == "botapi_xxx"

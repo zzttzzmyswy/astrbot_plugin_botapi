@@ -236,7 +236,7 @@ async function pollOnce() {
   try {
     const res = await bridge.apiPost(`sessions/${chat.hash}/history`, { since: chat.maxId });
     const msgs = res.messages || [];
-    log("poll ok", msgs.length, "maxId=", chat.maxId);
+    log("poll ok", msgs.length, res);
     if (msgs.length) {
       msgs.forEach(appendBubble);
       chat.maxId = Math.max(chat.maxId, ...msgs.map((m) => parseInt(m.message_id) || 0));
