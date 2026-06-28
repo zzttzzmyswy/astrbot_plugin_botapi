@@ -5,6 +5,13 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-06-28
+
+### Added
+
+- 管理页直接对话：账户行「对话」按钮进入整页聊天视图，admin 以该账户身份在同一会话发话（与手机端共享上下文/历史），轮询历史收回复（final / thinking / tool_status），不碰 SSE。手机端会实时收到 admin 发起的回复（同一会话固有行为）。
+- 后端 `submit_inbound` 共享 helper：手机 `/message` 与管理页 `/chat` 注入逻辑统一，避免双份漂移。
+
 ## [1.1.5] - 2026-06-25
 
 ### Fixed
@@ -60,7 +67,8 @@
 - BotAPI 适配器插件首个可用版本：`/auth` `/message` `/upload` `/stream` `/history` 五端点，纯 SSE 回复，逐 token 流式，断连重连自动补消息，多账户隔离，Dashboard 管理页。
 - 完整手机端 API 文档 `docs/API.md`。
 
-[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v1.1.5...HEAD
+[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.0
 [1.1.5]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.1.5
 [1.1.4]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.1.4
 [1.1.3]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.1.3
