@@ -4,6 +4,14 @@
 >
 > 适用 AstrBot ≥ 4.25.5。
 
+## 客户端 App
+
+配套手机客户端（iOS / Android，调用本插件的 HTTP API）：
+
+👉 **https://github.com/zzttzzmyswy/astrbot-botapi-client**
+
+服务端（本仓库）装好后，用该 App 填 token 即可连上发消息 / 收流式回复。
+
 ## 它解决什么
 
 | 痛点 | webchat | BotAPI |
