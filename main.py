@@ -80,6 +80,9 @@ class BotApiStar(Star):
         context.register_web_api(
             f"/{P}/accounts/<token_hash>/export", self._export, ["POST"], "导出历史"
         )
+        context.register_web_api(
+            f"/{P}/sessions/<token_hash>/chat", self._chat, ["POST"], "会话对话"
+        )
 
     # ── helpers ──
 
@@ -291,6 +294,26 @@ class BotApiStar(Star):
             }).__dict__
         return Response().error("不支持的格式，可选 md 或 json").__dict__
 
+    async def _do_chat(self, token_hash, text):
+        """管理页直接对话：以该 token 身份注入同一会话（与手机端 /message 共享）。
+        回复经轮询 sessions/<hash>/history 获取，不碰 SSE。"""
+        rt = runtime()
+        adapter = rt.adapter
+        if not adapter:
+            return Response().error("适配器未就绪").__dict__
+        target = next(
+            (t for t in (adapter.cfg.tokens or []) if self._hash_tok(t) == token_hash),
+            None,
+        )
+        if not target:
+            return Response().error("未找到账户").__dict__
+        if not (text and text.strip()):
+            return Response().error("消息不能为空").__dict__
+        from .routes import submit_inbound
+
+        message_id = await submit_inbound(adapter, target, text)
+        return Response().ok({"message_id": message_id}).__dict__
+
     # ── register_web_api handlers（薄封装：取参→调 _do_*）──
 
     async def _stats(self):
@@ -343,3 +366,8 @@ class BotApiStar(Star):
         data = await request.get_json()
         fmt = (data or {}).get("format", "md")
         return await self._do_export(token_hash, fmt)
+
+    async def _chat(self, token_hash):
+        data = await request.get_json()
+        text = (data or {}).get("text", "")
+        return await self._do_chat(token_hash, text)

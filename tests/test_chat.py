@@ -53,3 +53,65 @@ async def test_submit_inbound_builds_and_commits(monkeypatch):
     assert evt.message_obj.sender.user_id == "t1"
     assert evt.message_obj.message_str == "你好"
     assert evt.get_extra("enable_streaming") is True
+
+
+# ── Task 2: admin _do_chat ──
+
+
+def _star_with_tokens(tokens):
+    """BotApiStar 不跑 __init__（避免注册 web_api），注入带 tokens 的假 adapter。"""
+    from types import SimpleNamespace
+
+    class _A:
+        pass
+
+    adapter = _A()
+    adapter.cfg = SimpleNamespace(tokens=list(tokens), nicknames={})
+    adapter.platform_id = "botapi"
+    from astrbot_plugin_botapi.runtime import runtime
+
+    rt = runtime()
+    rt.adapter = adapter
+    s = BotApiStar.__new__(BotApiStar)
+    return s
+
+
+@pytest.mark.asyncio
+async def test_do_chat_happy(monkeypatch):
+    s = _star_with_tokens(["t1"])
+
+    async def fake_submit(adapter, token, text):
+        assert token == "t1" and text == "你好"
+        return "botapi_xxx"
+
+    monkeypatch.setattr("astrbot_plugin_botapi.routes.submit_inbound", fake_submit)
+    res = await s._do_chat(_hash("t1"), "你好")
+    assert res["status"] == "ok"
+    assert res["data"]["message_id"] == "botapi_xxx"
+
+
+@pytest.mark.asyncio
+async def test_do_chat_unknown_account():
+    s = _star_with_tokens(["t1"])
+    res = await s._do_chat("deadbeef", "x")
+    assert res["status"] == "error"
+    assert res["message"] == "未找到账户"
+
+
+@pytest.mark.asyncio
+async def test_do_chat_empty_text():
+    s = _star_with_tokens(["t1"])
+    res = await s._do_chat(_hash("t1"), "   ")
+    assert res["status"] == "error"
+    assert res["message"] == "消息不能为空"
+
+
+@pytest.mark.asyncio
+async def test_do_chat_adapter_not_ready():
+    from astrbot_plugin_botapi.runtime import runtime
+
+    rt = runtime()
+    rt.adapter = None
+    s = BotApiStar.__new__(BotApiStar)
+    res = await s._do_chat(_hash("t1"), "hi")
+    assert res["message"] == "适配器未就绪"
