@@ -193,16 +193,18 @@ async function deleteAccount(tokenHash) {
 
 function esc(s) { const d = document.createElement("div"); d.textContent = String(s ?? ""); return d.innerHTML; }
 
-// ── 整页对话（admin 以 token 身份在同一会话发话，轮询历史收回复）──
+// ── 整页对话（admin 以 token 身份在同一会话发话，轮询 conversation_manager 收回复）──
+// 历史读 conversation_manager（LLM 真实对话），按 (role,content) 去重追加，
+// 避免对话被截断/重排时索引漂移导致重复或丢失。
 
-const chat = { hash: "", nick: "", maxId: 0, timer: null, active: false };
+const chat = { hash: "", nick: "", timer: null, active: false, rendered: new Set() };
 
 function openChat(tokenHash, nickname) {
   log("openChat", tokenHash, nickname);
   chat.hash = tokenHash;
   chat.nick = nickname || tokenHash;
-  chat.maxId = 0;
   chat.active = true;
+  chat.rendered = new Set();
   document.getElementById("main-view").classList.add("hidden");
   document.getElementById("chat-view").classList.remove("hidden");
   document.getElementById("chat-title").textContent = `对话：${chat.nick}`;
@@ -221,27 +223,22 @@ function closeChat() {
 async function loadHistory() {
   try {
     const res = await bridge.apiPost(`sessions/${chat.hash}/history`, { limit: 50 });
-    log("loadHistory ok", `msgs=${(res.messages||[]).length} diag=${JSON.stringify(res._diag)}`);
     const msgs = res.messages || [];
-    msgs.forEach(appendBubble);
-    if (msgs.length) {
-      chat.maxId = Math.max(...msgs.map((m) => parseInt(m.message_id) || 0));
-      scrollChatBottom();
-    }
+    let added = 0;
+    msgs.forEach((m) => { if (appendBubble(m)) added++; });
+    log("loadHistory ok", `msgs=${msgs.length} added=${added}`);
+    if (added) scrollChatBottom();
   } catch (err) { log("loadHistory ERR", err); toast("加载历史失败: " + (err?.message || err)); }
 }
 
 async function pollOnce() {
   if (!chat.active) return;
   try {
-    const res = await bridge.apiPost(`sessions/${chat.hash}/history`, { since: chat.maxId });
+    const res = await bridge.apiPost(`sessions/${chat.hash}/history`, { limit: 50 });
     const msgs = res.messages || [];
-    log("poll ok", `msgs=${msgs.length} maxId=${chat.maxId} diag=${JSON.stringify(res._diag)}`);
-    if (msgs.length) {
-      msgs.forEach(appendBubble);
-      chat.maxId = Math.max(chat.maxId, ...msgs.map((m) => parseInt(m.message_id) || 0));
-      scrollChatBottom();
-    }
+    let added = 0;
+    msgs.forEach((m) => { if (appendBubble(m)) added++; });
+    if (added) { log("poll new", added); scrollChatBottom(); }
   } catch (err) { log("poll ERR", err); }   // 单次失败静默，下个周期重试
 }
 
@@ -267,13 +264,16 @@ async function sendChat() {
   ta.style.height = "auto";
   log("sendChat", JSON.stringify({ hash: chat.hash, text }));
   try {
-    const res = await bridge.apiPost(`sessions/${chat.hash}/chat`, { text });
-    log("sendChat ok", `mid=${res.message_id} diag=${JSON.stringify(res._diag)}`);
-    await pollOnce();   // 立即拉一次，用户行 ~1s 内回显
+    await bridge.apiPost(`sessions/${chat.hash}/chat`, { text });
+    await pollOnce();   // 立即拉一次（用户行+回复随 pipeline 落库后即显示）
   } catch (err) { log("sendChat ERR", err); toast("发送失败: " + (err?.message || err)); }
 }
 
+// 返回 true 表示新气泡已追加，false 表示去重跳过。
 function appendBubble(m) {
+  const sig = `${m.role}:${m.content}`;
+  if (chat.rendered.has(sig)) return false;
+  chat.rendered.add(sig);
   const box = document.getElementById("chat-messages");
   const ts = m.timestamp ? new Date(m.timestamp * 1000).toLocaleTimeString("zh-CN") : "";
   const role = m.role, typ = m.type;
@@ -288,6 +288,7 @@ function appendBubble(m) {
     html = `<div class="bubble bubble-bot"><div>${esc(m.content || "")}</div><div class="bubble-meta">${esc(ts)}</div></div>`;
   }
   box.insertAdjacentHTML("beforeend", html);
+  return true;
 }
 
 function scrollChatBottom() {

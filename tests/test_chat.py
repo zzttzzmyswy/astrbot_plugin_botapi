@@ -88,7 +88,6 @@ async def test_do_chat_happy(monkeypatch):
         return [], False
 
     monkeypatch.setattr("astrbot_plugin_botapi.routes.submit_inbound", fake_submit)
-    monkeypatch.setattr("astrbot_plugin_botapi.history.get_history", fake_get)
     res = await s._do_chat(_hash("t1"), "你好")
     assert res["status"] == "ok"
     assert res["data"]["message_id"] == "botapi_xxx"
@@ -121,22 +120,22 @@ async def test_do_chat_adapter_not_ready():
     assert res["message"] == "适配器未就绪"
 
 
-# ── Task 3: admin _do_history ──
+# ── Task 3: admin _do_history（读 conversation_manager）──
 
 
 @pytest.mark.asyncio
 async def test_do_history_happy(monkeypatch):
     s = _star_with_tokens(["t1"])
 
-    async def fake_get(pid, tok, since, limit):
-        assert tok == "t1" and since == "5" and limit == 50
-        return [{"message_id": "6", "role": "assistant", "type": "text",
-                 "content": "hi", "timestamp": 1}], False
+    async def fake_get(rt, pid, tok, limit):
+        assert tok == "t1" and limit == 50
+        return [{"message_id": "0", "role": "assistant", "type": "text",
+                 "content": "hi", "timestamp": 0}]
 
-    monkeypatch.setattr("astrbot_plugin_botapi.history.get_history", fake_get)
+    monkeypatch.setattr("astrbot_plugin_botapi.history.get_conversation_messages", fake_get)
     res = await s._do_history(_hash("t1"), since="5", limit=50)
     assert res["status"] == "ok"
-    assert res["data"]["messages"][0]["message_id"] == "6"
+    assert res["data"]["messages"][0]["content"] == "hi"
     assert res["data"]["has_more"] is False
 
 
@@ -153,11 +152,11 @@ async def test_do_history_limit_capped(monkeypatch):
     s = _star_with_tokens(["t1"])
     seen = {}
 
-    async def fake_get(pid, tok, since, limit):
+    async def fake_get(rt, pid, tok, limit):
         seen["limit"] = limit
-        return [], False
+        return []
 
-    monkeypatch.setattr("astrbot_plugin_botapi.history.get_history", fake_get)
+    monkeypatch.setattr("astrbot_plugin_botapi.history.get_conversation_messages", fake_get)
     await s._do_history(_hash("t1"), limit="9999")
     assert seen["limit"] == 200
 

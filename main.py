@@ -299,7 +299,8 @@ class BotApiStar(Star):
 
     async def _do_chat(self, token_hash, text):
         """管理页直接对话：以该 token 身份注入同一会话（与手机端 /message 共享）。
-        回复经轮询 sessions/<hash>/history 获取，不碰 SSE。"""
+        消息经 commit_event 进 LLM pipeline，更新 conversation_manager；回复轮询
+        sessions/<hash>/history 取（读 conversation_manager）。"""
         rt = runtime()
         adapter = rt.adapter
         if not adapter:
@@ -313,37 +314,14 @@ class BotApiStar(Star):
         if not (text and text.strip()):
             return Response().error("消息不能为空").__dict__
         from .routes import submit_inbound
-        from .history import get_history as _gh
 
         message_id = await submit_inbound(adapter, target, text)
-        _rows, _ = await _gh(adapter.platform_id, target, None, 200)
-
-        # 诊断（v1.2.6）：绕过 submit_inbound，直接调 manager.insert 插一行测试数据，
-        # 看能不能落表 / 有没有异常。隔离 persist 链路 vs DB 层。
-        direct_err = None
-        try:
-            await rt.message_history_manager.insert(
-                platform_id=adapter.platform_id, user_id=target,
-                content={"role": "user", "kind": "user", "text": "DIAG", "message_id": "diag"},
-                sender_id=target, sender_name="AdminDiag")
-        except Exception as e:
-            direct_err = f"{type(e).__name__}: {e}"
-        _rows2, _ = await _gh(adapter.platform_id, target, None, 200)
-
-        return Response().ok({
-            "message_id": message_id,
-            "_diag": {
-                "platform_id": adapter.platform_id,
-                "target": target,
-                "mgr_set": bool(rt.message_history_manager),
-                "rows_after_send": len(_rows),
-                "rows_after_direct": len(_rows2),
-                "direct_err": direct_err,
-            },
-        }).__dict__
+        return Response().ok({"message_id": message_id}).__dict__
 
     async def _do_history(self, token_hash, since=None, limit=50):
-        """管理页拉某账户会话历史（轮询用 since=最大行 id 取增量）。复用 history.get_history。"""
+        """管理页拉某账户会话历史。读 conversation_manager（LLM 真实对话上下文，
+        稳定可用），不读 platform_message_history（部分 4.26 环境 insert 不落表）。
+        前端按 (role,content) 去重，since 仅作兼容占位。"""
         rt = runtime()
         adapter = rt.adapter
         if not adapter:
@@ -354,19 +332,11 @@ class BotApiStar(Star):
         )
         if not target:
             return Response().error("未找到账户").__dict__
-        from .history import get_history
+        from .history import get_conversation_messages
 
         limit = min(int(limit), 200) if limit else 50
-        msgs, has_more = await get_history(adapter.platform_id, target, since, limit)
-        return Response().ok({
-            "messages": msgs, "has_more": has_more,
-            "_diag": {
-                "platform_id": adapter.platform_id,
-                "target": target,
-                "mgr_set": bool(rt.message_history_manager),
-                "since": since, "limit": limit,
-            },
-        }).__dict__
+        msgs = await get_conversation_messages(rt, adapter.platform_id, target, limit)
+        return Response().ok({"messages": msgs, "has_more": False}).__dict__
 
     # ── register_web_api handlers（薄封装：取参→调 _do_*）──
 

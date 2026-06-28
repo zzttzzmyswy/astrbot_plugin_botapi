@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-06-28
+
+### Fixed
+
+- 管理页直接对话看不到任何消息（v1.2.0 起一直空白）：根因是 `platform_message_history` 表在部分 AstrBot 4.26 环境的仪表盘插件页请求上下文下，`message_history_manager.insert` 调了不抛错但不落表（直接 insert 同样 0 行，DB 层问题，插件无法修复）。管理页历史改读 `conversation_manager`（LLM 真实对话上下文，与 stats 同源、稳定可用），不再依赖 platform_message_history。
+
+### Changed
+
+- 管理页 `sessions/<hash>/history` 数据源由 `platform_message_history` 改为 `conversation_manager`。
+- 前端按 `(role, content)` 去重追加，避免对话被 LLM 截断/重排时索引漂移导致重复或丢失。
+- 移除 v1.2.3–v1.2.6 的诊断日志与 `_diag` 字段。
+
+### Note
+
+- 手机端 `/history`（端口 9000）仍读 `platform_message_history`；若该环境同样不落表，手机端历史/断连补消息也会空。后续可同样改读 conversation_manager，但会改变手机端 API 语义（历史变为 LLM 对话视图，不再含 thinking/tool_status 行），需评估。
+
 ## [1.2.6] - 2026-06-28
 
 ### Changed
@@ -103,7 +119,8 @@
 - BotAPI 适配器插件首个可用版本：`/auth` `/message` `/upload` `/stream` `/history` 五端点，纯 SSE 回复，逐 token 流式，断连重连自动补消息，多账户隔离，Dashboard 管理页。
 - 完整手机端 API 文档 `docs/API.md`。
 
-[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v1.2.6...HEAD
+[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.3.0
 [1.2.6]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.6
 [1.2.5]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.5
 [1.2.4]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.4

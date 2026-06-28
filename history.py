@@ -1,9 +1,55 @@
+import json
 from datetime import datetime, timezone
 
 from astrbot.core import logger
 
 from .runtime import runtime
 from .models import SSEEvent
+
+
+async def get_conversation_messages(rt, platform_id, token, limit=50):
+    """从 conversation_manager（LLM 真实对话上下文）取某 token 的消息列表。
+
+    管理页直接对话用此函数而非 platform_message_history——后者在某些 4.26 环境
+    下 insert 不落表，而 conversation_manager 是 LLM pipeline 维护的、稳定可用。
+    返回 row_to_sse 兼容形态：{message_id(索引), role, type:text, content, timestamp}。
+    """
+    mgr = rt.conversation_manager
+    if not mgr:
+        return []
+    umo = f"{platform_id}:FriendMessage:{token}"
+    try:
+        cid = await mgr.get_curr_conversation_id(umo)
+        if not cid:
+            return []
+        conv = await mgr.get_conversation(umo, cid)
+        if not conv or not conv.history:
+            return []
+        history = json.loads(conv.history)
+    except Exception as exc:
+        logger.warning("[BotAPI] get_conversation_messages 失败: %s", exc)
+        return []
+    out = []
+    for idx, item in enumerate(history):
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role", "")
+        if role == "system":
+            continue
+        content = item.get("content", "")
+        if isinstance(content, list):   # 多模态：拼文本片段
+            content = "".join(
+                p.get("text", "") for p in content
+                if isinstance(p, dict) and p.get("type") == "text"
+            )
+        out.append({
+            "message_id": str(idx),
+            "role": role or "assistant",
+            "type": "text",
+            "content": content or "",
+            "timestamp": 0,
+        })
+    return out[-limit:]
 
 
 def row_to_sse(row):
