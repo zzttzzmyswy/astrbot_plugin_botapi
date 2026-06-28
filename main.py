@@ -313,11 +313,23 @@ class BotApiStar(Star):
         if not (text and text.strip()):
             return Response().error("消息不能为空").__dict__
         from .routes import submit_inbound
+        from .history import get_history as _gh
 
         message_id = await submit_inbound(adapter, target, text)
-        # 诊断（v1.2.4）：查 submit_inbound 是否真把用户消息写进 platform_message_history
-        from .history import get_history as _gh
         _rows, _ = await _gh(adapter.platform_id, target, None, 200)
+
+        # 诊断（v1.2.6）：绕过 submit_inbound，直接调 manager.insert 插一行测试数据，
+        # 看能不能落表 / 有没有异常。隔离 persist 链路 vs DB 层。
+        direct_err = None
+        try:
+            await rt.message_history_manager.insert(
+                platform_id=adapter.platform_id, user_id=target,
+                content={"role": "user", "kind": "user", "text": "DIAG", "message_id": "diag"},
+                sender_id=target, sender_name="AdminDiag")
+        except Exception as e:
+            direct_err = f"{type(e).__name__}: {e}"
+        _rows2, _ = await _gh(adapter.platform_id, target, None, 200)
+
         return Response().ok({
             "message_id": message_id,
             "_diag": {
@@ -325,6 +337,8 @@ class BotApiStar(Star):
                 "target": target,
                 "mgr_set": bool(rt.message_history_manager),
                 "rows_after_send": len(_rows),
+                "rows_after_direct": len(_rows2),
+                "direct_err": direct_err,
             },
         }).__dict__
 
