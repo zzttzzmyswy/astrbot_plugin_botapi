@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-06-28
+
+### Fixed
+
+- 管理页直接对话加载历史/轮询失败（"Plugin bridge endpoint is invalid"）：`bridge.apiGet(endpoint, params)` 的 query 须走 `params` 参数，误把 `?limit=`/`?since=` 拼进 endpoint 字符串导致端点不匹配。改为 `{ limit }` / `{ since }` 传参。
+
 ## [1.2.0] - 2026-06-28
 
 ### Added
@@ -67,7 +73,8 @@
 - BotAPI 适配器插件首个可用版本：`/auth` `/message` `/upload` `/stream` `/history` 五端点，纯 SSE 回复，逐 token 流式，断连重连自动补消息，多账户隔离，Dashboard 管理页。
 - 完整手机端 API 文档 `docs/API.md`。
 
-[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.1
 [1.2.0]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.0
 [1.1.5]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.1.5
 [1.1.4]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.1.4
