@@ -221,7 +221,7 @@ function closeChat() {
 async function loadHistory() {
   try {
     const res = await bridge.apiPost(`sessions/${chat.hash}/history`, { limit: 50 });
-    log("loadHistory ok", res);
+    log("loadHistory ok", `msgs=${(res.messages||[]).length} diag=${JSON.stringify(res._diag)}`);
     const msgs = res.messages || [];
     msgs.forEach(appendBubble);
     if (msgs.length) {
@@ -236,7 +236,7 @@ async function pollOnce() {
   try {
     const res = await bridge.apiPost(`sessions/${chat.hash}/history`, { since: chat.maxId });
     const msgs = res.messages || [];
-    log("poll ok", msgs.length, res);
+    log("poll ok", `msgs=${msgs.length} maxId=${chat.maxId} diag=${JSON.stringify(res._diag)}`);
     if (msgs.length) {
       msgs.forEach(appendBubble);
       chat.maxId = Math.max(chat.maxId, ...msgs.map((m) => parseInt(m.message_id) || 0));
@@ -268,7 +268,7 @@ async function sendChat() {
   log("sendChat", JSON.stringify({ hash: chat.hash, text }));
   try {
     const res = await bridge.apiPost(`sessions/${chat.hash}/chat`, { text });
-    log("sendChat ok", res);
+    log("sendChat ok", `mid=${res.message_id} diag=${JSON.stringify(res._diag)}`);
     await pollOnce();   // 立即拉一次，用户行 ~1s 内回显
   } catch (err) { log("sendChat ERR", err); toast("发送失败: " + (err?.message || err)); }
 }

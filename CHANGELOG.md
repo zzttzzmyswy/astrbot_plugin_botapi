@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+## [1.2.5] - 2026-06-28
+
+### Changed
+
+- 直接对话诊断再增强：前端把 `_diag` 打成字符串（不用展开），后端 `_insert` 加服务端日志（no-op 时 WARNING、插入时 INFO 带 platform_id/user_id）。定位 persist 为何没把消息写进 platform_message_history。
+
 ## [1.2.4] - 2026-06-28
 
 ### Changed
@@ -91,7 +97,8 @@
 - BotAPI 适配器插件首个可用版本：`/auth` `/message` `/upload` `/stream` `/history` 五端点，纯 SSE 回复，逐 token 流式，断连重连自动补消息，多账户隔离，Dashboard 管理页。
 - 完整手机端 API 文档 `docs/API.md`。
 
-[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v1.2.4...HEAD
+[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v1.2.5...HEAD
+[1.2.5]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.5
 [1.2.4]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.4
 [1.2.3]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.3
 [1.2.2]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.2

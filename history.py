@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+from astrbot.core import logger
+
 from .runtime import runtime
 from .models import SSEEvent
 
@@ -51,7 +53,15 @@ async def catchup_events(platform_id, token, since):
 async def _insert(content, user_id, sender_id, sender_name):
     rt = runtime()
     if not (rt.message_history_manager and rt.adapter):
+        logger.warning(
+            "[BotAPI] _insert NO-OP: mgr=%r adapter=%r",
+            rt.message_history_manager, rt.adapter,
+        )
         return
+    logger.info(
+        "[BotAPI] _insert platform_id=%s user_id=%s kind=%s",
+        rt.adapter.platform_id, user_id, (content or {}).get("kind"),
+    )
     await rt.message_history_manager.insert(
         platform_id=rt.adapter.platform_id, user_id=user_id, content=content,
         sender_id=sender_id, sender_name=sender_name)
