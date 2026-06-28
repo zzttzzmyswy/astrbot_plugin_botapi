@@ -83,6 +83,9 @@ class BotApiStar(Star):
         context.register_web_api(
             f"/{P}/sessions/<token_hash>/chat", self._chat, ["POST"], "会话对话"
         )
+        context.register_web_api(
+            f"/{P}/sessions/<token_hash>/history", self._history, ["GET"], "会话历史"
+        )
 
     # ── helpers ──
 
@@ -314,6 +317,24 @@ class BotApiStar(Star):
         message_id = await submit_inbound(adapter, target, text)
         return Response().ok({"message_id": message_id}).__dict__
 
+    async def _do_history(self, token_hash, since=None, limit=50):
+        """管理页拉某账户会话历史（轮询用 since=最大行 id 取增量）。复用 history.get_history。"""
+        rt = runtime()
+        adapter = rt.adapter
+        if not adapter:
+            return Response().error("适配器未就绪").__dict__
+        target = next(
+            (t for t in (adapter.cfg.tokens or []) if self._hash_tok(t) == token_hash),
+            None,
+        )
+        if not target:
+            return Response().error("未找到账户").__dict__
+        from .history import get_history
+
+        limit = min(int(limit), 200) if limit else 50
+        msgs, has_more = await get_history(adapter.platform_id, target, since, limit)
+        return Response().ok({"messages": msgs, "has_more": has_more}).__dict__
+
     # ── register_web_api handlers（薄封装：取参→调 _do_*）──
 
     async def _stats(self):
@@ -371,3 +392,8 @@ class BotApiStar(Star):
         data = await request.get_json()
         text = (data or {}).get("text", "")
         return await self._do_chat(token_hash, text)
+
+    async def _history(self, token_hash):
+        since = request.args.get("since")
+        limit = request.args.get("limit", 50)
+        return await self._do_history(token_hash, since, limit)

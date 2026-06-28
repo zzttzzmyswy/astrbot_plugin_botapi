@@ -115,3 +115,55 @@ async def test_do_chat_adapter_not_ready():
     s = BotApiStar.__new__(BotApiStar)
     res = await s._do_chat(_hash("t1"), "hi")
     assert res["message"] == "适配器未就绪"
+
+
+# ── Task 3: admin _do_history ──
+
+
+@pytest.mark.asyncio
+async def test_do_history_happy(monkeypatch):
+    s = _star_with_tokens(["t1"])
+
+    async def fake_get(pid, tok, since, limit):
+        assert tok == "t1" and since == "5" and limit == 50
+        return [{"message_id": "6", "role": "assistant", "type": "text",
+                 "content": "hi", "timestamp": 1}], False
+
+    monkeypatch.setattr("astrbot_plugin_botapi.history.get_history", fake_get)
+    res = await s._do_history(_hash("t1"), since="5", limit=50)
+    assert res["status"] == "ok"
+    assert res["data"]["messages"][0]["message_id"] == "6"
+    assert res["data"]["has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_do_history_unknown_account():
+    s = _star_with_tokens(["t1"])
+    res = await s._do_history("deadbeef")
+    assert res["status"] == "error"
+    assert res["message"] == "未找到账户"
+
+
+@pytest.mark.asyncio
+async def test_do_history_limit_capped(monkeypatch):
+    s = _star_with_tokens(["t1"])
+    seen = {}
+
+    async def fake_get(pid, tok, since, limit):
+        seen["limit"] = limit
+        return [], False
+
+    monkeypatch.setattr("astrbot_plugin_botapi.history.get_history", fake_get)
+    await s._do_history(_hash("t1"), limit="9999")
+    assert seen["limit"] == 200
+
+
+@pytest.mark.asyncio
+async def test_do_history_adapter_not_ready():
+    from astrbot_plugin_botapi.runtime import runtime
+
+    rt = runtime()
+    rt.adapter = None
+    s = BotApiStar.__new__(BotApiStar)
+    res = await s._do_history(_hash("t1"))
+    assert res["message"] == "适配器未就绪"
