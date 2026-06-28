@@ -219,7 +219,7 @@ function closeChat() {
 
 async function loadHistory() {
   try {
-    const res = await bridge.apiGet(`sessions/${chat.hash}/history`, { limit: 50 });
+    const res = await bridge.apiPost(`sessions/${chat.hash}/history`, { limit: 50 });
     const msgs = res.messages || [];
     msgs.forEach(appendBubble);
     if (msgs.length) {
@@ -232,7 +232,7 @@ async function loadHistory() {
 async function pollOnce() {
   if (!chat.active) return;
   try {
-    const res = await bridge.apiGet(`sessions/${chat.hash}/history`, { since: chat.maxId });
+    const res = await bridge.apiPost(`sessions/${chat.hash}/history`, { since: chat.maxId });
     const msgs = res.messages || [];
     if (msgs.length) {
       msgs.forEach(appendBubble);

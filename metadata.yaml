@@ -1,6 +1,6 @@
 name: astrbot_plugin_botapi
 desc: BotAPI 自定义移动端适配器 — 一人一 Bot 极简移动端接入，支持弱网断连恢复。
-version: 1.2.1
+version: 1.2.2
 author: zzttzzmyswy
 repo: https://github.com/zzttzzmyswy/astrbot_plugin_botapi
 astrbot_version: ">=4.25.5"

@@ -84,7 +84,7 @@ class BotApiStar(Star):
             f"/{P}/sessions/<token_hash>/chat", self._chat, ["POST"], "会话对话"
         )
         context.register_web_api(
-            f"/{P}/sessions/<token_hash>/history", self._history, ["GET"], "会话历史"
+            f"/{P}/sessions/<token_hash>/history", self._history, ["POST"], "会话历史"
         )
 
     # ── helpers ──
@@ -394,6 +394,9 @@ class BotApiStar(Star):
         return await self._do_chat(token_hash, text)
 
     async def _history(self, token_hash):
-        since = request.args.get("since")
-        limit = request.args.get("limit", 50)
+        # 用 POST+body（与 export/chat 同构），避开 bridge apiGet 的 query/params 路径
+        # （sandbox iframe null-origin 下 apiGet+query 会让父外壳 postMessage 失败）。
+        data = await request.get_json()
+        since = (data or {}).get("since")
+        limit = (data or {}).get("limit", 50)
         return await self._do_history(token_hash, since, limit)

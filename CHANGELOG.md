@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-06-28
+
+### Fixed
+
+- 管理页直接对话仍看不到历史 / 收发消息（v1.2.1 未根治）：根因是 bridge `apiGet(endpoint, params)` 带 query 参数的回复路径在 sandbox iframe（null-origin）下触发父外壳 `postMessage` target origin `'null'` 失败，请求发出去但响应回不来。改用 `apiPost(endpoint, body)`（与 export / chat 同构，已验证可用）：`sessions/<hash>/history` 由 GET 改 POST，`since` / `limit` 走 body。
+
 ## [1.2.1] - 2026-06-28
 
 ### Fixed
@@ -73,7 +79,8 @@
 - BotAPI 适配器插件首个可用版本：`/auth` `/message` `/upload` `/stream` `/history` 五端点，纯 SSE 回复，逐 token 流式，断连重连自动补消息，多账户隔离，Dashboard 管理页。
 - 完整手机端 API 文档 `docs/API.md`。
 
-[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v1.2.2...HEAD
+[1.2.2]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.2
 [1.2.1]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.1
 [1.2.0]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.0
 [1.1.5]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.1.5
