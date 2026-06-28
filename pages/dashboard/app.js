@@ -198,6 +198,7 @@ function esc(s) { const d = document.createElement("div"); d.textContent = Strin
 const chat = { hash: "", nick: "", maxId: 0, timer: null, active: false };
 
 function openChat(tokenHash, nickname) {
+  log("openChat", tokenHash, nickname);
   chat.hash = tokenHash;
   chat.nick = nickname || tokenHash;
   chat.maxId = 0;
@@ -220,13 +221,14 @@ function closeChat() {
 async function loadHistory() {
   try {
     const res = await bridge.apiPost(`sessions/${chat.hash}/history`, { limit: 50 });
+    log("loadHistory ok", res);
     const msgs = res.messages || [];
     msgs.forEach(appendBubble);
     if (msgs.length) {
       chat.maxId = Math.max(...msgs.map((m) => parseInt(m.message_id) || 0));
       scrollChatBottom();
     }
-  } catch (err) { toast("加载历史失败: " + (err?.message || err)); }
+  } catch (err) { log("loadHistory ERR", err); toast("加载历史失败: " + (err?.message || err)); }
 }
 
 async function pollOnce() {
@@ -234,12 +236,13 @@ async function pollOnce() {
   try {
     const res = await bridge.apiPost(`sessions/${chat.hash}/history`, { since: chat.maxId });
     const msgs = res.messages || [];
+    log("poll ok", msgs.length, "maxId=", chat.maxId);
     if (msgs.length) {
       msgs.forEach(appendBubble);
       chat.maxId = Math.max(chat.maxId, ...msgs.map((m) => parseInt(m.message_id) || 0));
       scrollChatBottom();
     }
-  } catch (err) { log("poll fail", err); }   // 单次失败静默，下个周期重试
+  } catch (err) { log("poll ERR", err); }   // 单次失败静默，下个周期重试
 }
 
 function startPoll() {
@@ -262,10 +265,12 @@ async function sendChat() {
   if (!text) return;
   ta.value = "";
   ta.style.height = "auto";
+  log("sendChat", JSON.stringify({ hash: chat.hash, text }));
   try {
-    await bridge.apiPost(`sessions/${chat.hash}/chat`, { text });
+    const res = await bridge.apiPost(`sessions/${chat.hash}/chat`, { text });
+    log("sendChat ok", res);
     await pollOnce();   // 立即拉一次，用户行 ~1s 内回显
-  } catch (err) { toast("发送失败: " + (err?.message || err)); }
+  } catch (err) { log("sendChat ERR", err); toast("发送失败: " + (err?.message || err)); }
 }
 
 function appendBubble(m) {

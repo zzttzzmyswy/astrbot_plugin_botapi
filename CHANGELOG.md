@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-06-28
+
+### Changed
+
+- 管理页直接对话加诊断日志：`openChat` / `loadHistory` / `pollOnce` / `sendChat` 的响应与错误全部打印到 console。用于定位 v1.2.2 后仍看不到消息的根因（是调用没触发、响应回不来、还是返回空）。
+
 ## [1.2.2] - 2026-06-28
 
 ### Fixed
@@ -79,7 +85,8 @@
 - BotAPI 适配器插件首个可用版本：`/auth` `/message` `/upload` `/stream` `/history` 五端点，纯 SSE 回复，逐 token 流式，断连重连自动补消息，多账户隔离，Dashboard 管理页。
 - 完整手机端 API 文档 `docs/API.md`。
 
-[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v1.2.2...HEAD
+[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v1.2.3...HEAD
+[1.2.3]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.3
 [1.2.2]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.2
 [1.2.1]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.1
 [1.2.0]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.0
