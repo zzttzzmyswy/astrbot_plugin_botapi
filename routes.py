@@ -12,6 +12,37 @@ from .history import persist_inbound_text, catchup_events
 from .models import SSEEvent
 
 
+async def submit_inbound(adapter, token, text, file_ids=None) -> str:
+    """构造入站 AstrBotMessage + BotApiMessageEvent，persist + commit。
+    手机 /message 与管理页 /chat 共用，保证同一会话。返回 message_id。"""
+    _get_or_create_origin(adapter, token)   # 建立 token→origin 映射
+    msg = AstrBotMessage()
+    msg.type = MessageType.FRIEND_MESSAGE
+    msg.self_id = adapter.client_self_id
+    msg.session_id = token   # 只传 token
+    msg.message_id = f"botapi_{uuid.uuid4().hex[:12]}"
+    msg.sender = MessageMember(user_id=token, nickname="User")
+    msg.timestamp = int(time.time())
+    components = []
+    if text:
+        components.append(Plain(text))
+    if file_ids:
+        for fid in file_ids:
+            info = adapter._uploaded_files.get(fid)
+            if info:
+                components.append(_file_info_to_component(info))
+    msg.message = components
+    msg.message_str = text or "[消息]"
+    msg.raw_message = {"text": text, "file_ids": file_ids or []}
+
+    event = BotApiMessageEvent(message_str=msg.message_str, message_obj=msg,
+                               platform_meta=adapter.meta(), session_id=token, adapter=adapter)
+    event.set_extra("enable_streaming", True)
+    await persist_inbound_text(token, msg.message_id, text)
+    adapter.commit_event(event)
+    return msg.message_id
+
+
 def _setup_routes(adapter):
     app = adapter.app
 
@@ -39,32 +70,8 @@ def _setup_routes(adapter):
         data = await request.get_json()
         text = (data or {}).get("text", "")
         file_ids = (data or {}).get("file_ids", [])
-
-        origin = _get_or_create_origin(adapter, token)
-        msg = AstrBotMessage()
-        msg.type = MessageType.FRIEND_MESSAGE
-        msg.self_id = adapter.client_self_id
-        msg.session_id = token   # 只传 token
-        msg.message_id = f"botapi_{uuid.uuid4().hex[:12]}"
-        msg.sender = MessageMember(user_id=token, nickname="User")
-        msg.timestamp = int(time.time())
-        components = []
-        if text:
-            components.append(Plain(text))
-        for fid in file_ids:
-            info = adapter._uploaded_files.get(fid)
-            if info:
-                components.append(_file_info_to_component(info))
-        msg.message = components
-        msg.message_str = text or "[消息]"
-        msg.raw_message = data
-
-        event = BotApiMessageEvent(message_str=msg.message_str, message_obj=msg,
-                                   platform_meta=adapter.meta(), session_id=token, adapter=adapter)
-        event.set_extra("enable_streaming", True)
-        await persist_inbound_text(token, msg.message_id, text)
-        adapter.commit_event(event)
-        return jsonify({"message_id": msg.message_id})
+        message_id = await submit_inbound(adapter, token, text, file_ids)
+        return jsonify({"message_id": message_id})
 
     @app.post("/api/v1/botapi/upload")
     async def upload_file():
