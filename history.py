@@ -83,6 +83,12 @@ async def get_history(platform_id, token, since=None, before=None, limit=50):
 
 
 async def catchup_events(platform_id, token, since):
+    """构造 since 之后的 SSE 回放事件（按 row.id 升序）。
+
+    注意：当前 routes._stream_gen 不再调用本函数（见 routes._stream_gen 注释）。
+    保留是因为函数本身正确——未来 client 改用事件自带 timestamp 存 created_at
+    后，可重新启用 SSE 回放以降低重连补漏延迟。现仅由 tests/test_history_pure.py 覆盖。
+    """
     rt = runtime()
     rows = await rt.message_history_manager.get(
         platform_id=platform_id, user_id=token, page=1, page_size=200)

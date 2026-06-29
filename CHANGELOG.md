@@ -5,6 +5,17 @@
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-06-29
+
+### Fixed
+
+- 手机端拉取历史时较早的消息被盖上最新时间、排到真正最新记录下方：根因是 SSE 重连补漏（`_stream_gen` 的 `catchup_events`）把历史行（含较早消息）经 SSE 重发给 client，client 用本地 `now()` 存 `created_at`、丢弃事件自带的 `timestamp`，导致重放的较早历史显示成最新时间。`_stream_gen` 不再经 SSE 回放历史，`since` 参数保留兼容 client URL 但不再回放。历史补漏统一走 `/history` 端点（`row_to_sse` 带真实 `timestamp`+`role`，client `mergeHistory` 正确落库），不丢消息、时间正确。
+
+### Note
+
+- 重连后错过的消息改由 client 的 60s 周期对齐 / 回复后补漏 / 回前台全量同步（均走 `/history`）补齐，最迟 60s 显示，时间正确。
+- `history.catchup_events` 函数保留（本身正确），未来 client 改用事件自带 `timestamp` 后可重新启用以降低重连补漏延迟。
+
 ## [1.3.0] - 2026-06-28
 
 ### Fixed
@@ -119,7 +130,8 @@
 - BotAPI 适配器插件首个可用版本：`/auth` `/message` `/upload` `/stream` `/history` 五端点，纯 SSE 回复，逐 token 流式，断连重连自动补消息，多账户隔离，Dashboard 管理页。
 - 完整手机端 API 文档 `docs/API.md`。
 
-[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.3.1
 [1.3.0]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.3.0
 [1.2.6]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.6
 [1.2.5]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.5

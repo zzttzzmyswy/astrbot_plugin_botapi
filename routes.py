@@ -118,10 +118,12 @@ def _setup_routes(adapter):
 
 
 async def _stream_gen(adapter, token, q, since):
+    # 不经 SSE 回放历史：catchup 会把历史行（含较早消息）重发给 client，client
+    # 用本地 now() 存 created_at、丢弃事件自带的 timestamp，导致较早的历史被
+    # 盖上最新时间、排到真正最新记录下方。历史补漏改由 client 调 /history 端点
+    # （row_to_sse 带真实 timestamp+role，mergeHistory 正确落库）。since 参数
+    # 保留以兼容 client 的 /stream?since=<cursor> URL，但不再回放。
     try:
-        if since:
-            for evt in await catchup_events(adapter.platform_id, token, since):
-                yield evt.to_sse()
         while True:
             try:
                 item = await asyncio.wait_for(q.get(), timeout=30)

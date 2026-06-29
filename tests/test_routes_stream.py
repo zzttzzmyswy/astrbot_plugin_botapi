@@ -134,25 +134,36 @@ async def test_stream_gen_cleans_up_queue_in_finally():
 
 
 @pytest.mark.asyncio
-async def test_stream_gen_catchup_when_since_given(monkeypatch):
-    """When since is given, catchup events are yielded before entering the event loop."""
+async def test_stream_gen_no_catchup_replay_when_since_given(monkeypatch):
+    """since 给定时不再经 SSE 回放历史。
+
+    旧实现把 catchup_events 的历史行经 SSE 重发给 client，client 用本地 now()
+    存 created_at、丢弃事件自带的 timestamp，导致较早的历史被盖上最新时间、
+    排到真正最新记录下方。历史补漏改由 client 调 /history 端点（row_to_sse 带
+    真实 timestamp+role，mergeHistory 正确落库）。since 参数保留兼容 client
+    的 /stream?since=<cursor> URL，但不再回放。
+    """
     adapter = _make_adapter_without_app()
     q = asyncio.Queue(maxsize=256)
     adapter._sse_clients["tok"] = [q]
 
+    called = {"n": 0}
+
     async def fake_catchup(platform_id, token, since):
-        return [SSEEvent("message", {"message_id": "m1", "content": "catchup_msg"})]
+        called["n"] += 1
+        return [SSEEvent("message", {"content": "should_not_replay"})]
 
     monkeypatch.setattr(routes_mod, "catchup_events", fake_catchup)
 
     gen = routes_mod._stream_gen(adapter, "tok", q, since="100")
-    # First yield must be catchup
+    # 放入实时事件：第一个 yield 必须来自 queue，而非 catchup 回放
+    await q.put(SSEEvent("message", {"content": "live"}))
     item1 = await gen.__anext__()
-    assert "catchup_msg" in item1
+    assert "live" in item1
+    assert "should_not_replay" not in item1
+    assert called["n"] == 0   # catchup_events 不应被调用
 
-    # Now put None to stop the event loop
     await q.put(None)
-    items = [item async for item in gen]
-    assert items == []
-    # finally must have cleaned up
+    async for _ in gen:
+        pass
     assert q not in adapter._sse_clients.get("tok", [])
