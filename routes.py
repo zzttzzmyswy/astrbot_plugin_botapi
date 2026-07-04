@@ -6,6 +6,7 @@ import uuid
 from astrbot.api.platform import AstrBotMessage, MessageMember, MessageType
 from astrbot.api.message_components import Image, Record, File, Plain
 from quart import jsonify, request
+from werkzeug.utils import secure_filename
 
 from .event import BotApiMessageEvent
 from .history import persist_inbound_text, catchup_events
@@ -84,7 +85,6 @@ def _setup_routes(adapter):
         file = files.get("file")
         if not file:
             return jsonify({"error": "no_file"}), 400
-        from werkzeug.utils import secure_filename
         filename = secure_filename(file.filename or "untitled")
         file_id = f"f_{uuid.uuid4().hex[:10]}"
         save_path = adapter._upload_dir / f"{file_id}_{filename}"
@@ -92,6 +92,45 @@ def _setup_routes(adapter):
         info = {"file_id": file_id, "name": filename,
                 "mime_type": file.content_type or "application/octet-stream",
                 "size": save_path.stat().st_size}
+        adapter._uploaded_files[file_id] = {**info, "path": str(save_path)}
+        return jsonify(info)
+
+    # 分块上传:大文件切成多块逐个 POST(每块 ≪ 服务端请求超时),最后合并。
+    # 绕过服务端 ASGI/反代 ~90s 的请求超时(50MB 单次上传会被 408)。
+    @app.post("/api/v1/botapi/upload/chunk")
+    async def upload_chunk():
+        form = await request.form
+        upload_id = (form.get("upload_id") or "").strip()
+        if not upload_id:
+            return jsonify({"error": "no_upload_id"}), 400
+        files = await request.files
+        chunk = files.get("file")
+        if chunk is None:
+            return jsonify({"error": "no_file"}), 400
+        part_path = adapter._upload_dir / f".{upload_id}.part"
+        # 追加写:按到达顺序拼接(offset 由客户端传入,仅用于进度/续传,此处不强校验)。
+        with open(part_path, "ab") as f:
+            while True:
+                buf = chunk.stream.read(65536)
+                if not buf:
+                    break
+                f.write(buf)
+        return jsonify({"upload_id": upload_id, "offset": part_path.stat().st_size})
+
+    @app.post("/api/v1/botapi/upload/complete")
+    async def upload_complete():
+        data = await request.get_json() or {}
+        upload_id = (data.get("upload_id") or "").strip()
+        filename = secure_filename(data.get("filename") or "untitled")
+        mime_type = data.get("mime_type") or "application/octet-stream"
+        part_path = adapter._upload_dir / f".{upload_id}.part"
+        if not part_path.exists():
+            return jsonify({"error": "no_part"}), 400
+        file_id = f"f_{uuid.uuid4().hex[:10]}"
+        save_path = adapter._upload_dir / f"{file_id}_{filename}"
+        part_path.rename(save_path)
+        info = {"file_id": file_id, "name": filename,
+                "mime_type": mime_type, "size": save_path.stat().st_size}
         adapter._uploaded_files[file_id] = {**info, "path": str(save_path)}
         return jsonify(info)
 

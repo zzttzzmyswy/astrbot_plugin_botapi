@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-07-04
+
+### 新增
+
+- **分块上传**:大文件(>10MB)切 5MB/块逐个 POST `/upload/chunk`,最后
+  `/upload/complete` 合并。绕过服务端 ASGI/反代 ~90s 的请求超时(50MB 单次
+  上传会 408)。配合 `MAX_CONTENT_LENGTH=200MB` 与 nginx `client_max_body_size`。
+
 ## [1.3.1] - 2026-06-29
 
 ### Fixed
