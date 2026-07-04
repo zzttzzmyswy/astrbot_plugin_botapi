@@ -45,6 +45,11 @@ async def submit_inbound(adapter, token, text, file_ids=None) -> str:
 
 def _setup_routes(adapter):
     app = adapter.app
+    # 允许大文件上传:Quart/Werkzeug 默认/框架可能设了较小的 MAX_CONTENT_LENGTH,
+    # 实测 50MB 文件在 nginx 放过后应用层仍 413(RequestEntityTooLarge)。显式调到
+    # 200MB 覆盖大多数场景;nginx 侧也需相应 client_max_body_size。request.files
+    # 解析 multipart 时走临时文件,不会把整文件读入内存。
+    app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024
 
     @app.before_request
     async def _check_auth():
