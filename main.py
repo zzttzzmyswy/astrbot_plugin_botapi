@@ -86,6 +86,24 @@ class BotApiStar(Star):
         context.register_web_api(
             f"/{P}/sessions/<token_hash>/history", self._history, ["POST"], "会话历史"
         )
+        context.register_web_api(
+            f"/{P}/sessions/<token_hash>", self._sessions_web, ["GET"], "会话列表"
+        )
+        context.register_web_api(
+            f"/{P}/sessions/<token_hash>", self._create_session_web, ["POST"], "新建会话"
+        )
+        context.register_web_api(
+            f"/{P}/sessions/<token_hash>/<sid>/rename",
+            self._rename_session_web,
+            ["POST"],
+            "重命名会话",
+        )
+        context.register_web_api(
+            f"/{P}/sessions/<token_hash>/<sid>/delete",
+            self._delete_session_web,
+            ["POST"],
+            "删除会话",
+        )
 
     # ── helpers ──
 
@@ -118,6 +136,8 @@ class BotApiStar(Star):
         if not adapter:
             return Response().error("适配器未就绪").__dict__
         pid = adapter.platform_id
+        from . import sessions as _sessions
+
         per = []
         for token in adapter.cfg.tokens or []:
             umo = f"{pid}:FriendMessage:{token}"
@@ -130,12 +150,13 @@ class BotApiStar(Star):
                         msg_count = len(json.loads(conv.history))
             except Exception:
                 pass
+            sse = _sessions.sse_queues_for(adapter, token)
             per.append({
                 "token_preview": self._preview(token),
                 "token_hash": self._hash_tok(token),
                 "nickname": adapter.cfg.nicknames.get(token, ""),
-                "online": bool(adapter._sse_clients.get(token)),
-                "sse_connections": len(adapter._sse_clients.get(token, [])),
+                "online": bool(sse),
+                "sse_connections": len(sse),
                 "message_count": msg_count,
                 "last_active": adapter._last_active.get(token),
             })
@@ -179,8 +200,14 @@ class BotApiStar(Star):
         toks = [t for t in adapter.config.get("tokens", []) if t != target]
         nicks = {k: v for k, v in adapter.config.get("nicknames", {}).items() if k != target}
         self._persist_account_state(adapter, toks, nicks)
-        for q in adapter._sse_clients.pop(target, []):
+        from . import sessions as _sessions
+
+        for q in _sessions.sse_queues_for(adapter, target):
             adapter._put(q, None)
+        # 逐个 scoped key 清理（token 及 token:*），保留旧默认行为
+        for key in list(adapter._sse_clients):
+            if key == target or key.startswith(f"{target}:"):
+                adapter._sse_clients.pop(key, None)
         if hasattr(adapter, "_token_to_origin"):
             adapter._token_to_origin.pop(target, None)
         return Response().ok({"message": "账户已删除"}).__dict__
@@ -198,8 +225,13 @@ class BotApiStar(Star):
             return Response().error("未找到账户").__dict__
         if disabled:
             adapter._disabled_tokens.add(target)
-            for q in adapter._sse_clients.pop(target, []):
+            from . import sessions as _sessions
+
+            for q in _sessions.sse_queues_for(adapter, target):
                 adapter._put(q, None)
+            for key in list(adapter._sse_clients):
+                if key == target or key.startswith(f"{target}:"):
+                    adapter._sse_clients.pop(key, None)
         else:
             adapter._disabled_tokens.discard(target)
         return Response().ok({"message": "状态已更新"}).__dict__
@@ -216,8 +248,9 @@ class BotApiStar(Star):
         if not target:
             return Response().error("未找到会话").__dict__
         from .models import SSEEvent
+        from . import sessions as _sessions
 
-        for q in adapter._sse_clients.pop(target, []):
+        for q in _sessions.sse_queues_for(adapter, target):
             adapter._put(
                 q,
                 SSEEvent(
@@ -225,9 +258,12 @@ class BotApiStar(Star):
                     {"code": "SESSION_KICKED", "message": "管理员已断开此会话"},
                 ),
             )
+        for key in list(adapter._sse_clients):
+            if key == target or key.startswith(f"{target}:"):
+                adapter._sse_clients.pop(key, None)
         return Response().ok({"message": "会话已断开"}).__dict__
 
-    async def _do_clear(self, token_hash):
+    async def _do_clear(self, token_hash, session_id=""):
         rt = runtime()
         adapter = rt.adapter
         if not adapter:
@@ -238,7 +274,13 @@ class BotApiStar(Star):
         )
         if not target:
             return Response().error("未找到会话").__dict__
-        umo = f"{adapter.platform_id}:FriendMessage:{target}"
+        from . import sessions as _sessions
+
+        try:
+            sid = _sessions.resolve_sid(adapter, target, session_id)
+        except LookupError:
+            return Response().error("未找到会话").__dict__
+        umo = _sessions.umo_for(adapter, target, sid)
         await rt.conversation_manager.new_conversation(umo)
         return Response().ok({"message": "历史已清除"}).__dict__
 
@@ -297,10 +339,11 @@ class BotApiStar(Star):
             }).__dict__
         return Response().error("不支持的格式，可选 md 或 json").__dict__
 
-    async def _do_chat(self, token_hash, text):
+    async def _do_chat(self, token_hash, text, session_id=""):
         """管理页直接对话：以该 token 身份注入同一会话（与手机端 /message 共享）。
         消息经 commit_event 进 LLM pipeline，更新 conversation_manager；回复轮询
-        sessions/<hash>/history 取（读 conversation_manager）。"""
+        sessions/<hash>/history 取（读 conversation_manager）。session_id 指定
+        分会话（默认会话为空）。"""
         rt = runtime()
         adapter = rt.adapter
         if not adapter:
@@ -315,13 +358,14 @@ class BotApiStar(Star):
             return Response().error("消息不能为空").__dict__
         from .routes import submit_inbound
 
-        message_id = await submit_inbound(adapter, target, text)
+        message_id = await submit_inbound(adapter, target, text, session_id=session_id)
         return Response().ok({"message_id": message_id}).__dict__
 
-    async def _do_history(self, token_hash, since=None, limit=50):
-        """管理页拉某账户会话历史。读 conversation_manager（LLM 真实对话上下文，
+    async def _do_history(self, token_hash, since=None, limit=50, session_id=""):
+        """管理页拉某账户/会话历史。读 conversation_manager（LLM 真实对话上下文，
         稳定可用），不读 platform_message_history（部分 4.26 环境 insert 不落表）。
-        前端按 (role,content) 去重，since 仅作兼容占位。"""
+        前端按 (role,content) 去重，since 仅作兼容占位。session_id 指定分会话，
+        缺省取默认会话。"""
         rt = runtime()
         adapter = rt.adapter
         if not adapter:
@@ -333,10 +377,108 @@ class BotApiStar(Star):
         if not target:
             return Response().error("未找到账户").__dict__
         from .history import get_conversation_messages
+        from . import sessions as _sessions
 
+        try:
+            sid = _sessions.resolve_sid(adapter, target, session_id)
+        except LookupError:
+            return Response().error("未找到会话").__dict__
+        scoped_key = _sessions.scoped_key_for(adapter, target, sid)
         limit = min(int(limit), 200) if limit else 50
-        msgs = await get_conversation_messages(rt, adapter.platform_id, target, limit)
+        msgs = await get_conversation_messages(rt, adapter.platform_id, scoped_key, limit)
         return Response().ok({"messages": msgs, "has_more": False}).__dict__
+
+    async def _do_sessions(self, token_hash):
+        """某账户（token_hash）的会话列表，默认会话在最前。"""
+        rt = runtime()
+        adapter = rt.adapter
+        if not adapter:
+            return Response().error("适配器未就绪").__dict__
+        target = next(
+            (t for t in (adapter.cfg.tokens or []) if self._hash_tok(t) == token_hash),
+            None,
+        )
+        if not target:
+            return Response().error("未找到账户").__dict__
+        from . import sessions as _sessions
+
+        return Response().ok({
+            "sessions": _sessions.sessions_list(adapter, target),
+            "default_id": _sessions.DEFAULT_SESSION_ID,
+        }).__dict__
+
+    async def _do_create_session(self, token_hash, name):
+        """为某账户新建会话。"""
+        rt = runtime()
+        adapter = rt.adapter
+        if not adapter:
+            return Response().error("适配器未就绪").__dict__
+        target = next(
+            (t for t in (adapter.cfg.tokens or []) if self._hash_tok(t) == token_hash),
+            None,
+        )
+        if not target:
+            return Response().error("未找到账户").__dict__
+        from . import sessions as _sessions
+        import time as _time
+
+        raw_name = (name or "").strip() if isinstance(name, str) else ""
+        if not raw_name:
+            return Response().error("会话名称不能为空").__dict__
+        cur = _sessions.sessions_list(adapter, target)
+        if len(cur) >= _sessions.MAX_SESSIONS:
+            return Response().error("会话数量已达上限").__dict__
+        new = {"id": uuid.uuid4().hex[:12], "name": raw_name,
+               "created_at": int(_time.time())}
+        cur.append(new)
+        _sessions.save_sessions(adapter, target, cur)
+        return Response().ok({"session": new}).__dict__
+
+    async def _do_rename_session(self, token_hash, sid, name):
+        """重命名某账户的某会话。"""
+        rt = runtime()
+        adapter = rt.adapter
+        if not adapter:
+            return Response().error("适配器未就绪").__dict__
+        target = next(
+            (t for t in (adapter.cfg.tokens or []) if self._hash_tok(t) == token_hash),
+            None,
+        )
+        if not target:
+            return Response().error("未找到账户").__dict__
+        from . import sessions as _sessions
+
+        raw_name = (name or "").strip() if isinstance(name, str) else ""
+        if not raw_name:
+            return Response().error("会话名称不能为空").__dict__
+        cur = _sessions.sessions_list(adapter, target)
+        for x in cur:
+            if x["id"] == sid:
+                x["name"] = raw_name
+                _sessions.save_sessions(adapter, target, cur)
+                return Response().ok({"message": "会话已重命名"}).__dict__
+        return Response().error("未找到会话").__dict__
+
+    async def _do_delete_session(self, token_hash, sid):
+        """删除某账户的某会话（默认会话不可删）。"""
+        rt = runtime()
+        adapter = rt.adapter
+        if not adapter:
+            return Response().error("适配器未就绪").__dict__
+        target = next(
+            (t for t in (adapter.cfg.tokens or []) if self._hash_tok(t) == token_hash),
+            None,
+        )
+        if not target:
+            return Response().error("未找到账户").__dict__
+        from . import sessions as _sessions
+
+        if sid == _sessions.DEFAULT_SESSION_ID:
+            return Response().error("默认会话不可删除").__dict__
+        if not any(x["id"] == sid for x in _sessions.sessions_list(adapter, target)):
+            return Response().error("未找到会话").__dict__
+        await _sessions.delete_session(adapter, target, sid)
+        return Response().ok({"message": "会话已删除"}).__dict__
 
     # ── register_web_api handlers（薄封装：取参→调 _do_*）──
 
@@ -348,14 +490,16 @@ class BotApiStar(Star):
         adapter = rt.adapter
         if not adapter:
             return Response().error("适配器未就绪").__dict__
+        from . import sessions as _sessions
+
         accs = [
             {
                 "token_preview": self._preview(t),
                 "token_hash": self._hash_tok(t),
                 "nickname": adapter.cfg.nicknames.get(t, ""),
                 "enabled": t not in adapter._disabled_tokens,
-                "online": bool(adapter._sse_clients.get(t)),
-                "sse_connections": len(adapter._sse_clients.get(t, [])),
+                "online": bool(_sessions.sse_queues_for(adapter, t)),
+                "sse_connections": len(_sessions.sse_queues_for(adapter, t)),
                 "last_active": adapter._last_active.get(t),
             }
             for t in (adapter.cfg.tokens or [])
@@ -384,7 +528,9 @@ class BotApiStar(Star):
         return await self._do_disconnect(token_hash)
 
     async def _clear(self, token_hash):
-        return await self._do_clear(token_hash)
+        data = await request.get_json()
+        session_id = (data or {}).get("session_id", "")
+        return await self._do_clear(token_hash, session_id)
 
     async def _export(self, token_hash):
         data = await request.get_json()
@@ -394,7 +540,8 @@ class BotApiStar(Star):
     async def _chat(self, token_hash):
         data = await request.get_json()
         text = (data or {}).get("text", "")
-        return await self._do_chat(token_hash, text)
+        session_id = (data or {}).get("session_id", "")
+        return await self._do_chat(token_hash, text, session_id)
 
     async def _history(self, token_hash):
         # 用 POST+body（与 export/chat 同构），避开 bridge apiGet 的 query/params 路径
@@ -402,4 +549,21 @@ class BotApiStar(Star):
         data = await request.get_json()
         since = (data or {}).get("since")
         limit = (data or {}).get("limit", 50)
-        return await self._do_history(token_hash, since, limit)
+        session_id = (data or {}).get("session_id", "")
+        return await self._do_history(token_hash, since, limit, session_id)
+
+    async def _sessions_web(self, token_hash):
+        return await self._do_sessions(token_hash)
+
+    async def _create_session_web(self, token_hash):
+        data = await request.get_json()
+        name = (data or {}).get("name", "")
+        return await self._do_create_session(token_hash, name)
+
+    async def _rename_session_web(self, token_hash, sid):
+        data = await request.get_json()
+        name = (data or {}).get("name", "")
+        return await self._do_rename_session(token_hash, sid, name)
+
+    async def _delete_session_web(self, token_hash, sid):
+        return await self._do_delete_session(token_hash, sid)

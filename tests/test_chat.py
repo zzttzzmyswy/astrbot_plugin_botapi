@@ -69,6 +69,7 @@ def _star_with_tokens(tokens):
 
     adapter = _A()
     adapter.cfg = SimpleNamespace(tokens=list(tokens), nicknames={})
+    adapter.config = {"id": "botapi", "tokens": list(tokens), "nicknames": {}, "sessions": {}}
     adapter.platform_id = "botapi"
     from astrbot_plugin_botapi.runtime import runtime
 
@@ -82,12 +83,9 @@ def _star_with_tokens(tokens):
 async def test_do_chat_happy(monkeypatch):
     s = _star_with_tokens(["t1"])
 
-    async def fake_submit(adapter, token, text):
-        assert token == "t1" and text == "你好"
+    async def fake_submit(adapter, token, text, session_id=""):
+        assert token == "t1" and text == "你好" and session_id == ""
         return "botapi_xxx"
-
-    async def fake_get(pid, tok, since, limit):
-        return [], False
 
     monkeypatch.setattr("astrbot_plugin_botapi.routes.submit_inbound", fake_submit)
     res = await s._do_chat(_hash("t1"), "你好")
@@ -135,7 +133,7 @@ async def test_do_history_happy(monkeypatch):
                  "content": "hi", "timestamp": 0}]
 
     monkeypatch.setattr("astrbot_plugin_botapi.history.get_conversation_messages", fake_get)
-    res = await s._do_history(_hash("t1"), since="5", limit=50)
+    res = await s._do_history(_hash("t1"), since="5", limit=50, session_id="")
     assert res["status"] == "ok"
     assert res["data"]["messages"][0]["content"] == "hi"
     assert res["data"]["has_more"] is False
@@ -159,7 +157,7 @@ async def test_do_history_limit_capped(monkeypatch):
         return []
 
     monkeypatch.setattr("astrbot_plugin_botapi.history.get_conversation_messages", fake_get)
-    await s._do_history(_hash("t1"), limit="9999")
+    await s._do_history(_hash("t1"), limit="9999", session_id="")
     assert seen["limit"] == 200
 
 
