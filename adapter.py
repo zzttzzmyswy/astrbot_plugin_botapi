@@ -92,10 +92,15 @@ class BotApiAdapter(Platform):
         return {}
 
     def _legacy_port(self):
-        """迁移回退：读旧平台配置（astrbot_config["platform"] 里 type=botapi 条目）的 host/port。"""
+        """迁移回退：读旧平台配置（astrbot_config["platform"] 里 type=botapi 条目）的 host/port；port 非数字时返回 None。"""
         for p in (astrbot_config.get("platform") or []):
             if p.get("type") == "botapi":
-                return p.get("host"), int(p.get("port") or 9000)
+                port = p.get("port")
+                try:
+                    port = int(port) if port else None
+                except (TypeError, ValueError):
+                    port = None
+                return p.get("host"), port
         return None, None
 
     def meta(self) -> PlatformMetadata:

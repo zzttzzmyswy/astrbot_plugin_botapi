@@ -169,3 +169,39 @@ async def test_run_returns_coroutine_without_binding(tmp_path, monkeypatch):
     assert inspect.iscoroutine(coro)   # 返回协程对象
     assert not coro.cr_running         # 未开始执行 → 未绑定端口
     coro.close()
+
+
+# ── 防御：非数字端口不抛异常 ──
+
+@pytest.mark.asyncio
+async def test_legacy_port_non_numeric_port_returns_none(monkeypatch, tmp_path):
+    """_legacy_port 遇到非数字端口（如 "abc"）返回 None 而非抛异常，供回退链用 or 9000 处理。"""
+    import astrbot_plugin_botapi.adapter as adapter_mod
+    a, _ = _adapter(monkeypatch, _base_plugin_conf(str(tmp_path)))
+    monkeypatch.setattr(adapter_mod, "astrbot_config", {"platform": [
+        {"id": "botapi", "type": "botapi", "host": "1.2.3.4", "port": "abc"}]})
+    assert a._legacy_port() == ("1.2.3.4", None)
+
+
+@pytest.mark.asyncio
+async def test_init_non_numeric_legacy_port_does_not_crash(tmp_path, monkeypatch):
+    """_legacy_port 遇到非数字端口不抛异常，防止回退链崩溃。"""
+    import astrbot.core.utils.astrbot_path as astrbot_path_mod
+    from astrbot_plugin_botapi.adapter import BotApiAdapter
+    import astrbot_plugin_botapi.adapter as adapter_mod
+
+    conf_dir = str(tmp_path)
+    # 不写配置文件，让插件配置按 schema 创建默认配置
+    monkeypatch.setattr(astrbot_path_mod, "get_astrbot_config_path", lambda: conf_dir)
+
+    # 旧平台配置有非数字 port，直接替换 astrbot_config
+    mock_astrbot_config = {"platform": [
+        {"id": "botapi", "type": "botapi", "host": "1.2.3.4", "port": "xyz"}]}
+    monkeypatch.setattr(adapter_mod, "astrbot_config", mock_astrbot_config)
+
+    platform_config = {"type": "botapi", "id": "botapi", "tokens": ["t1"]}
+    # 关键：这个构造应该不抛异常，即使 _legacy_port 遇到非数字 port 也能安全降级
+    a = BotApiAdapter(platform_config, {}, asyncio.Queue())
+    # 插件配置存在且有默认值，所以 _host/_port 来自插件配置
+    assert a._host == "0.0.0.0"
+    assert a._port == 9000
