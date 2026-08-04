@@ -28,21 +28,22 @@ def test_markdown_renders_user_and_assistant():
         {"message_id": "1", "role": "user", "type": "text", "content": "你好", "timestamp": 1719234567},
         {"message_id": "2", "role": "assistant", "type": "text", "content": "你好！有什么可以帮你？", "timestamp": 1719234568},
     ]
-    md = history.to_markdown(rows, {"nickname": "Alice", "token_preview": "abc...1234",
+    md = history.to_markdown(rows, {"token_preview": "abc...1234",
                                     "exported_at": "2026-06-25 12:00:00"})
-    assert "# BotAPI 对话记录 — Alice" in md
+    assert "# BotAPI 对话记录 — abc...1234" in md
     assert "## 👤 用户" in md
     assert "## 🤖 助手" in md
     assert "你好" in md
     assert "你好！有什么可以帮你？" in md
     assert "> 消息数：2" in md
     assert "> 导出时间：2026-06-25 12:00:00" in md
+    assert "> 账户：`abc...1234`" in md
 
 
 def test_markdown_renders_thinking_in_details():
     rows = [{"message_id": "3", "role": "assistant", "type": "thinking",
              "content": "用户问的是...", "timestamp": 1719234570}]
-    md = history.to_markdown(rows, {"nickname": "", "token_preview": "t", "exported_at": "x"})
+    md = history.to_markdown(rows, {"token_preview": "t", "exported_at": "x"})
     assert "<details" in md and "</details>" in md
     assert "用户问的是..." in md
     assert "## 🤖 助手" not in md   # thinking 不走助手标题
@@ -51,13 +52,13 @@ def test_markdown_renders_thinking_in_details():
 def test_markdown_renders_tool_status_as_blockquote():
     rows = [{"message_id": "4", "role": "assistant", "type": "tool_status",
              "content": "调用 web_search", "timestamp": 1719234571}]
-    md = history.to_markdown(rows, {"nickname": "", "token_preview": "t", "exported_at": "x"})
+    md = history.to_markdown(rows, {"token_preview": "t", "exported_at": "x"})
     assert "> 🔨 工具状态" in md
     assert "调用 web_search" in md
 
 
 def test_markdown_empty_rows():
-    md = history.to_markdown([], {"nickname": "A", "token_preview": "p", "exported_at": "x"})
+    md = history.to_markdown([], {"token_preview": "p", "exported_at": "x"})
     assert "> 消息数：0" in md
     assert "## 👤" not in md
 
@@ -133,17 +134,16 @@ def _hash(t):
     return hashlib.sha256(t.encode()).hexdigest()[:16]
 
 
-def _make_star(monkeypatch, tokens=None, nicknames=None, rows=None):
+def _make_star(monkeypatch, tokens=None, rows=None):
     ctx = SimpleNamespace(
         conversation_manager=SimpleNamespace(),
         message_history_manager=SimpleNamespace(),
         register_web_api=lambda r, h, m, d: None,
     )
     star = BotApiStar(ctx, None)
-    nicks = dict(nicknames or {})
     adapter = SimpleNamespace(
-        cfg=SimpleNamespace(tokens=list(tokens or []), nicknames=dict(nicks)),
-        config={"id": "botapi", "tokens": list(tokens or []), "nicknames": dict(nicks)},
+        cfg=SimpleNamespace(tokens=list(tokens or [])),
+        config={"id": "botapi", "tokens": list(tokens or [])},
         platform_id="botapi",
     )
     rt = _get_runtime()
@@ -157,11 +157,11 @@ def _make_star(monkeypatch, tokens=None, nicknames=None, rows=None):
 @pytest.mark.asyncio
 async def test_export_markdown(monkeypatch):
     rows = [_row(1, "user", "user", "你好"), _row(2, "assistant", "final", "你好！")]
-    star, adapter, _ = _make_star(monkeypatch, tokens=["tok"], nicknames={"tok": "Alice"}, rows=rows)
+    star, adapter, _ = _make_star(monkeypatch, tokens=["tok"], rows=rows)
     res = await star._do_export(_hash("tok"), "md")
     assert res["status"] == "ok"
     assert res["data"]["filename"].endswith(".md")
-    assert "Alice" in res["data"]["filename"]
+    assert "tok" in res["data"]["filename"]
     assert res["data"]["mime"] == "text/markdown"
     assert "## 👤 用户" in res["data"]["content"]
     assert "你好" in res["data"]["content"]

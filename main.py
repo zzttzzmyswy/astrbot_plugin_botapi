@@ -59,9 +59,6 @@ class BotApiStar(Star):
         context.register_web_api(f"/{P}/accounts", self._accounts, ["GET"], "账户列表")
         context.register_web_api(f"/{P}/accounts", self._create, ["POST"], "新增账户")
         context.register_web_api(
-            f"/{P}/accounts/<token_hash>/nickname", self._set_nickname, ["POST"], "设置昵称"
-        )
-        context.register_web_api(
             f"/{P}/accounts/<token_hash>/delete", self._delete, ["POST"], "删除账户"
         )
         context.register_web_api(
@@ -163,17 +160,14 @@ class BotApiStar(Star):
     def _preview(t):
         return f"{t[:8]}...{t[-4:]}" if len(t) > 16 else t
 
-    def _persist_account_state(self, adapter, new_tokens, new_nicknames):
-        """改全局 astrbot_config 子树（tokens + nicknames）+ 同步运行时副本 + 落盘。"""
+    def _persist_tokens(self, adapter, new_tokens):
+        """改全局 astrbot_config 子树（tokens）+ 同步运行时副本 + 落盘。"""
         for p in _cfg_singleton.get("platform", []):
             if p.get("id") == adapter.config.get("id"):
                 p["tokens"] = list(new_tokens)
-                p["nicknames"] = dict(new_nicknames)
                 break
         adapter.config["tokens"] = list(new_tokens)
-        adapter.config["nicknames"] = dict(new_nicknames)
         adapter.cfg.tokens = list(new_tokens)
-        adapter.cfg.nicknames = dict(new_nicknames)
         _cfg_singleton.save_config()
 
     def _persist_bindings(self, adapter):
@@ -213,7 +207,6 @@ class BotApiStar(Star):
             per.append({
                 "token_preview": self._preview(token),
                 "token_hash": self._hash_tok(token),
-                "nickname": adapter.cfg.nicknames.get(token, ""),
                 "bound_platform": bindings.get(token),   # 有效绑定（含未生效回退）都展示，便于 UI 提示
                 "online": bool(sse),
                 "sse_connections": len(sse),
@@ -254,23 +247,16 @@ class BotApiStar(Star):
             platforms = sorted(set(platforms))
         return Response().ok({"platforms": platforms}).__dict__
 
-    async def _do_create(self, token=None, nickname=""):
+    async def _do_create(self, token=None):
         rt = runtime()
         adapter = rt.adapter
         if not adapter:
             return Response().error("适配器未就绪").__dict__
         token = token or uuid.uuid4().hex[:16]
         toks = list(adapter.config.get("tokens", []))
-        nicks = dict(adapter.config.get("nicknames", {}))
-        changed = False
         if token not in toks:
             toks.append(token)
-            changed = True
-        if nickname:
-            nicks[token] = nickname
-            changed = True
-        if changed:
-            self._persist_account_state(adapter, toks, nicks)
+            self._persist_tokens(adapter, toks)
         return Response().ok({"token": token, "message": "账户创建成功"}).__dict__
 
     async def _do_delete(self, token_hash):
@@ -285,8 +271,7 @@ class BotApiStar(Star):
         if not target:
             return Response().error("未找到账户").__dict__
         toks = [t for t in adapter.config.get("tokens", []) if t != target]
-        nicks = {k: v for k, v in adapter.config.get("nicknames", {}).items() if k != target}
-        self._persist_account_state(adapter, toks, nicks)
+        self._persist_tokens(adapter, toks)
         from . import sessions as _sessions
 
         for q in _sessions.sse_queues_for(adapter, target):
@@ -407,25 +392,6 @@ class BotApiStar(Star):
         await rt.conversation_manager.new_conversation(f"{platform_id}:FriendMessage:{tok}")
         return Response().ok({"message": "历史已清除"}).__dict__
 
-    async def _do_set_nickname(self, token_hash, nickname):
-        rt = runtime()
-        adapter = rt.adapter
-        if not adapter:
-            return Response().error("适配器未就绪").__dict__
-        target = next(
-            (t for t in (adapter.cfg.tokens or []) if self._hash_tok(t) == token_hash),
-            None,
-        )
-        if not target:
-            return Response().error("未找到账户").__dict__
-        nicks = dict(adapter.config.get("nicknames", {}))
-        if nickname:
-            nicks[target] = nickname
-        else:
-            nicks.pop(target, None)   # 空昵称=清除
-        self._persist_account_state(adapter, list(adapter.config.get("tokens", [])), nicks)
-        return Response().ok({"message": "昵称已更新"}).__dict__
-
     async def _do_export(self, token_hash, fmt):
         rt = runtime()
         adapter = rt.adapter
@@ -440,12 +406,11 @@ class BotApiStar(Star):
         from .history import get_export_rows, to_markdown
         rows = await get_export_rows(adapter.platform_id, target)
         meta = {
-            "nickname": adapter.cfg.nicknames.get(target, ""),
             "token_preview": self._preview(target),
             "exported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "count": len(rows),
         }
-        safe_title = meta["nickname"] or meta["token_preview"] or target[:8]
+        safe_title = meta["token_preview"] or target[:8]
         if fmt == "json":
             content = json.dumps(rows, ensure_ascii=False, indent=2)
             return Response().ok({
@@ -626,7 +591,6 @@ class BotApiStar(Star):
             {
                 "token_preview": self._preview(t),
                 "token_hash": self._hash_tok(t),
-                "nickname": adapter.cfg.nicknames.get(t, ""),
                 "enabled": t not in adapter._disabled_tokens,
                 "bound_platform": bindings.get(t),
                 "online": bool(_sessions.sse_queues_for(adapter, t)),
@@ -640,13 +604,7 @@ class BotApiStar(Star):
     async def _create(self):
         data = await request.get_json()
         token = (data or {}).get("token")
-        nickname = (data or {}).get("nickname", "")
-        return await self._do_create(token, nickname)
-
-    async def _set_nickname(self, token_hash):
-        data = await request.get_json()
-        nickname = (data or {}).get("nickname", "")
-        return await self._do_set_nickname(token_hash, nickname)
+        return await self._do_create(token)
 
     async def _delete(self, token_hash):
         return await self._do_delete(token_hash)

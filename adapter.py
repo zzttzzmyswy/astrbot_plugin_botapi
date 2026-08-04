@@ -32,14 +32,12 @@ _server_owner = None   # 当前拥有服务器（绑定端口）的 adapter 实�
 @register_platform_adapter(
     "botapi",
     "BotAPI 自定义移动端适配器 — 一人一 Bot 极简移动端接入，支持弱网断连恢复",
-    default_config_tmpl={"host": "0.0.0.0", "port": 9000, "tokens": [], "nicknames": {}},
+    default_config_tmpl={"host": "0.0.0.0", "port": 9000, "tokens": []},
     config_metadata={
         "host":   {"description": "监听地址", "type": "string", "hint": "0.0.0.0"},
         "port":   {"description": "监听端口", "type": "int", "hint": "9000"},
         "tokens": {"description": "允许的 Token 列表（空则允许所有非空 token）",
                    "type": "list", "items": {"type": "string"}},
-        "nicknames": {"description": "账户昵称/备注（{token: 昵称}，仅管理展示，不注入对话）",
-                      "type": "object", "hint": "{}"},
     },
     adapter_display_name="BotAPI 移动端",
     support_streaming_message=True,
@@ -54,7 +52,6 @@ class BotApiAdapter(Platform):
             host=platform_config.get("host", "0.0.0.0"),
             port=int(platform_config.get("port", 9000)),
             tokens=list(platform_config.get("tokens", [])),
-            nicknames=dict(platform_config.get("nicknames", {})),
             sessions=dict(platform_config.get("sessions", {})),
         )
         self.platform_id = self.meta().id

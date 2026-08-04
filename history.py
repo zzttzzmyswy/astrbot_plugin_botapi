@@ -177,16 +177,15 @@ def _fmt_ts(ts) -> str:
 
 def to_markdown(rows: list, meta: dict) -> str:
     """把 row_to_sse 结果渲染为 Markdown。纯函数（不读时间，meta 由调用方注入）。"""
-    nickname = meta.get("nickname") or ""
     token_preview = meta.get("token_preview") or ""
     exported_at = meta.get("exported_at", "")
-    title = nickname or token_preview or "未知账户"
+    title = token_preview or "未知账户"
 
     lines = [f"# BotAPI 对话记录 — {title}", ""]
     if token_preview:
-        lines.append(f"> 账户：{nickname or '（无昵称）'} (`{token_preview}`)")
+        lines.append(f"> 账户：`{token_preview}`")
     else:
-        lines.append(f"> 账户：{nickname or '（无昵称）'}")
+        lines.append("> 账户：（未知）")
     lines.append(f"> 导出时间：{exported_at}")
     lines.append(f"> 消息数：{len(rows)}")
     lines += ["", "---", ""]

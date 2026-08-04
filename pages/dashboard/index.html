@@ -20,8 +20,8 @@
       </div>
       <div class="table-container">
         <table>
-          <thead><tr><th>昵称</th><th>Token</th><th>ID(hash)</th><th>状态</th><th>消息</th><th>SSE</th><th>最后活跃</th><th>绑定</th><th>操作</th></tr></thead>
-          <tbody id="account-list"><tr class="empty-row"><td colspan="9">加载中...</td></tr></tbody>
+          <thead><tr><th>Token</th><th>ID(hash)</th><th>状态</th><th>消息</th><th>SSE</th><th>最后活跃</th><th>绑定</th><th>操作</th></tr></thead>
+          <tbody id="account-list"><tr class="empty-row"><td colspan="8">加载中...</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -58,7 +58,6 @@
     <div id="modal-add" class="modal hidden">
       <div class="modal-content">
         <h3>新增 BotAPI 账户</h3>
-        <label>昵称/备注（可选，便于区分）:<input type="text" id="input-nickname" placeholder="如：张三的Bot" /></label>
         <label>Token（留空自动生成）:<input type="text" id="input-token" /></label>
         <div class="modal-actions">
           <button id="btn-create" class="btn btn-primary">创建</button>
@@ -67,14 +66,14 @@
       </div>
     </div>
 
-    <!-- 改名（替代 prompt，sandbox 无 allow-modals） -->
-    <div id="modal-nickname" class="modal hidden">
+    <!-- 会话命名（替代 prompt，sandbox 无 allow-modals） -->
+    <div id="modal-session-name" class="modal hidden">
       <div class="modal-content">
-        <h3>设置昵称/备注</h3>
-        <label>昵称（留空清除）:<input type="text" id="input-nick-new" /></label>
+        <h3>会话名称</h3>
+        <label>名称:<input type="text" id="input-session-name" /></label>
         <div class="modal-actions">
-          <button id="btn-nick-save" class="btn btn-primary">保存</button>
-          <button id="btn-nick-cancel" class="btn btn-secondary">取消</button>
+          <button id="btn-session-name-save" class="btn btn-primary">保存</button>
+          <button id="btn-session-name-cancel" class="btn btn-secondary">取消</button>
         </div>
       </div>
     </div>

@@ -27,16 +27,15 @@ def _hash(t):
     return hashlib.sha256(t.encode()).hexdigest()[:16]
 
 
-def _make_star(monkeypatch, tokens=None, nicknames=None, sessions=None):
+def _make_star(monkeypatch, tokens=None, sessions=None):
     """参照 test_admin_handlers.py::_make_star：带 sessions 存储 + _sse_clients。"""
     ctx, registered = _fake_context()
     star = BotApiStar(ctx, None)
-    nicks = dict(nicknames or {})
     all_s = dict(sessions or {})
     adapter = SimpleNamespace(
-        cfg=SimpleNamespace(tokens=list(tokens or []), nicknames=dict(nicks),
+        cfg=SimpleNamespace(tokens=list(tokens or []),
                             sessions=dict(all_s)),
-        config={"id": "botapi", "tokens": list(tokens or []), "nicknames": dict(nicks),
+        config={"id": "botapi", "tokens": list(tokens or []),
                 "sessions": dict(all_s)},
         platform_id="botapi",
         _sse_clients={},
@@ -54,7 +53,6 @@ def _make_star(monkeypatch, tokens=None, nicknames=None, sessions=None):
             {
                 "id": "botapi",
                 "tokens": list(tokens or []),
-                "nicknames": dict(nicks),
                 "sessions": dict(all_s),
             }
         ]

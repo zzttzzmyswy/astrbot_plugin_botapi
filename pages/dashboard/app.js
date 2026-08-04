@@ -27,13 +27,13 @@ function confirmDialog(message) {
   });
 }
 
-function promptDialog(current) {
+function sessionNameDialog(current) {
   return new Promise((resolve) => {
-    const input = document.getElementById("input-nick-new");
+    const input = document.getElementById("input-session-name");
     input.value = current || "";
-    const modal = document.getElementById("modal-nickname");
-    const ok = document.getElementById("btn-nick-save");
-    const cancel = document.getElementById("btn-nick-cancel");
+    const modal = document.getElementById("modal-session-name");
+    const ok = document.getElementById("btn-session-name-save");
+    const cancel = document.getElementById("btn-session-name-cancel");
     const done = (val) => { modal.classList.add("hidden"); ok.onclick = null; cancel.onclick = null; resolve(val); };
     modal.classList.remove("hidden");
     setTimeout(() => input.focus(), 0);
@@ -88,10 +88,9 @@ async function refresh() {
 
 function renderAccounts() {
   const tbody = document.getElementById("account-list");
-  if (!accounts.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="9">暂无账户</td></tr>'; return; }
+  if (!accounts.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="8">暂无账户</td></tr>'; return; }
   tbody.innerHTML = accounts.map(a => `
     <tr>
-      <td>${esc(a.nickname || "-")}</td>
       <td><code>${esc(a.token_preview)}</code></td>
       <td><code>${esc(a.token_hash)}</code></td>
       <td><span class="badge ${a.online ? 'badge-online' : 'badge-offline'}">${a.online ? '在线' : '离线'}</span></td>
@@ -100,11 +99,10 @@ function renderAccounts() {
       <td>${a.last_active ? new Date(a.last_active * 1000).toLocaleString('zh-CN') : '-'}</td>
       <td>${a.bound_platform ? `<span class="badge badge-bound" title="已绑定 ${esc(a.bound_platform)}">${esc(a.bound_platform)}</span>` : '<span class="badge badge-offline">未绑定</span>'}</td>
       <td>
-        <button class="btn btn-sm btn-secondary" data-action="bind" data-hash="${esc(a.token_hash)}" data-nickname="${esc(a.nickname || "")}">绑定</button>
+        <button class="btn btn-sm btn-secondary" data-action="bind" data-hash="${esc(a.token_hash)}">绑定</button>
         ${a.bound_platform ? `<button class="btn btn-sm btn-secondary" data-action="unbind" data-hash="${esc(a.token_hash)}">解绑</button>` : ''}
-        <button class="btn btn-sm btn-primary" data-action="chat" data-hash="${esc(a.token_hash)}" data-nickname="${esc(a.nickname || "")}">对话</button>
-        <button class="btn btn-sm btn-secondary" data-action="export" data-hash="${esc(a.token_hash)}" data-nickname="${esc(a.nickname || "")}">导出</button>
-        <button class="btn btn-sm btn-secondary" data-action="nickname" data-hash="${esc(a.token_hash)}" data-nickname="${esc(a.nickname || "")}">改名</button>
+        <button class="btn btn-sm btn-primary" data-action="chat" data-hash="${esc(a.token_hash)}">对话</button>
+        <button class="btn btn-sm btn-secondary" data-action="export" data-hash="${esc(a.token_hash)}">导出</button>
         <button class="btn btn-sm btn-danger" data-action="delete" data-hash="${esc(a.token_hash)}">删除</button>
       </td>
     </tr>`).join('');
@@ -116,12 +114,10 @@ function wireDelegation() {
     if (!btn) return;
     const action = btn.dataset.action;
     const hash = btn.dataset.hash;
-    const nick = btn.dataset.nickname || "";
-    if (action === "nickname") await setNickname(hash, nick);
-    else if (action === "delete") await deleteAccount(hash);
-    else if (action === "export") openExport(hash, nick);
-    else if (action === "chat") openSessions(hash, nick);
-    else if (action === "bind") openBind(hash, nick);
+    if (action === "delete") await deleteAccount(hash);
+    else if (action === "export") openExport(hash);
+    else if (action === "chat") openSessions(hash);
+    else if (action === "bind") openBind(hash);
     else if (action === "unbind") await unbindAccount(hash);
   });
 }
@@ -134,12 +130,10 @@ function setupToolbar() {
   document.getElementById("btn-refresh").addEventListener("click", refresh);
   document.getElementById("btn-create").addEventListener("click", async () => {
     const token = document.getElementById("input-token").value.trim();
-    const nickname = document.getElementById("input-nickname").value.trim();
     try {
-      await bridge.apiPost("accounts", { token: token || undefined, nickname: nickname || undefined });
+      await bridge.apiPost("accounts", { token: token || undefined });
       document.getElementById("modal-add").classList.add("hidden");
       document.getElementById("input-token").value = "";
-      document.getElementById("input-nickname").value = "";
       await refresh();
     } catch (err) { toast("创建失败: " + (err?.message || err)); }
   });
@@ -156,12 +150,12 @@ function setupToolbar() {
     document.getElementById("modal-bind").classList.add("hidden"));
 }
 
-let exportTarget = { hash: "", nickname: "" };
+let exportTarget = { hash: "" };
 
-function openExport(tokenHash, nickname) {
-  exportTarget = { hash: tokenHash, nickname: nickname || "" };
+function openExport(tokenHash) {
+  exportTarget = { hash: tokenHash };
   document.getElementById("export-msg").textContent =
-    `导出「${nickname || tokenHash}」的完整对话记录，选择格式（无条数上限）：`;
+    `导出「${tokenHash}」的完整对话记录，选择格式（无条数上限）：`;
   document.getElementById("modal-export").classList.remove("hidden");
 }
 
@@ -184,15 +178,6 @@ async function doExport(tokenHash, fmt) {
   }
 }
 
-async function setNickname(tokenHash, current) {
-  const nickname = await promptDialog(current);   // 页内模态（非 prompt()）
-  if (nickname === null) return;                   // 取消
-  try {
-    await bridge.apiPost(`accounts/${tokenHash}/nickname`, { nickname });
-    await refresh();
-  } catch (err) { toast("设置失败: " + (err?.message || err)); }
-}
-
 async function deleteAccount(tokenHash) {
   if (!(await confirmDialog(`确定删除 ${tokenHash}？此操作不可撤销。`))) return;  // 页内模态（非 confirm()）
   try {
@@ -203,10 +188,10 @@ async function deleteAccount(tokenHash) {
 
 // ── 绑定机器人（下拉选活跃平台，页内模态替代 prompt）──
 
-let bindTarget = { hash: "", nick: "" };
+let bindTarget = { hash: "" };
 
-async function openBind(tokenHash, nickname) {
-  bindTarget = { hash: tokenHash, nick: nickname || "" };
+async function openBind(tokenHash) {
+  bindTarget = { hash: tokenHash };
   const select = document.getElementById("select-bind-platform");
   select.innerHTML = '<option value="">加载中...</option>';
   document.getElementById("modal-bind").classList.remove("hidden");
@@ -222,7 +207,7 @@ async function openBind(tokenHash, nickname) {
       "没有可绑定的活跃平台（需在 AstrBot 中启用其他平台）。";
   } else {
     document.getElementById("bind-msg").textContent =
-      `选择「${bindTarget.nick || bindTarget.hash}」使用的机器人（绑定后对话走该平台的 LLM 配置）：`;
+      `选择「${bindTarget.hash}」使用的机器人（绑定后对话走该平台的 LLM 配置）：`;
   }
   select.innerHTML = platforms.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join("");
 }
@@ -256,21 +241,20 @@ function esc(s) {
 // 历史读 conversation_manager（LLM 真实对话上下文）；每次拉取全量重绘消息列表
 // （renderMessages），以服务端返回为准重建 DOM，避免增量去重漂移。
 
-const chat = { hash: "", nick: "", sid: "", timer: null, active: false, rendered: new Set() };
+const chat = { hash: "", sid: "", timer: null, active: false, rendered: new Set() };
 
 // ── 会话列表（账户 → 会话下钻）──
 // 每账户可建多个会话；进入某会话后 chat.sid 置为对应 sid，
 // loadHistory/pollOnce/sendChat 的请求体都会带 session_id。
 
-const sessions = { hash: "", nick: "", defaultId: "default" };
+const sessions = { hash: "", defaultId: "default" };
 
-function openSessions(tokenHash, nickname) {
-  log("openSessions", tokenHash, nickname);
+function openSessions(tokenHash) {
+  log("openSessions", tokenHash);
   sessions.hash = tokenHash;
-  sessions.nick = nickname || tokenHash;
   document.getElementById("main-view").classList.add("hidden");
   document.getElementById("sessions-view").classList.remove("hidden");
-  document.getElementById("sessions-title").textContent = `会话：${sessions.nick}`;
+  document.getElementById("sessions-title").textContent = `会话：${tokenHash}`;
   renderSessions();
 }
 
@@ -312,17 +296,16 @@ async function renderSessions() {
   }
 }
 
-function openChatSession(tokenHash, nickname, sid) {
-  log("openChatSession", tokenHash, nickname, sid);
+function openChatSession(tokenHash, sid) {
+  log("openChatSession", tokenHash, sid);
   chat.hash = tokenHash;
-  chat.nick = nickname || tokenHash;
   chat.sid = sid || "";
   chat.active = true;
   chat.rendered = new Set();
   pollFailCount = 0;
   document.getElementById("sessions-view").classList.add("hidden");
   document.getElementById("chat-view").classList.remove("hidden");
-  document.getElementById("chat-title").textContent = `对话：${chat.nick} / ${chat.sid}`;
+  document.getElementById("chat-title").textContent = `对话：${tokenHash} / ${chat.sid}`;
   document.getElementById("chat-messages").innerHTML = "";
   loadHistory();
   startPoll();
@@ -338,7 +321,7 @@ function closeChat() {
 }
 
 async function createSession(tokenHash) {
-  const name = await promptDialog("");
+  const name = await sessionNameDialog("");
   if (name === null) return;
   if (!name) { toast("会话名称不能为空"); return; }
   try {
@@ -348,7 +331,7 @@ async function createSession(tokenHash) {
 }
 
 async function renameSession(tokenHash, sid, current) {
-  const name = await promptDialog(current || "");
+  const name = await sessionNameDialog(current || "");
   if (name === null) return;
   if (!name) { toast("会话名称不能为空"); return; }
   try {
@@ -374,7 +357,7 @@ function wireSessions() {
     if (!btn) return;
     const action = btn.dataset.saction;
     const sid = btn.dataset.sid;
-    if (action === "enter") openChatSession(sessions.hash, sessions.nick, sid);
+    if (action === "enter") openChatSession(sessions.hash, sid);
     else if (action === "rename") await renameSession(sessions.hash, sid, btn.dataset.name || "");
     else if (action === "delete") await deleteSession(sessions.hash, sid);
   });
