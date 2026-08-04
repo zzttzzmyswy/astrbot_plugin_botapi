@@ -127,12 +127,19 @@ Expected: FAIL（`_conf_schema.json` 不存在；`run()` 仍起服务器）
 
 ```python
     def run(self):
-        """单实例化：Quart 服务器由插件 Star 启动，本方法不再绑定端口。
+        """单实例化：Quart 服务器由 adapter.__init__ 启动，本方法不再绑定端口。
         返回一个永不完成的协程，使 AstrBot PlatformManager 的任务无害驻留。"""
         return self._shutdown.wait()
 ```
 
-`main.py` `BotApiStar.__init__` 读插件配置起单例 Quart：
+**Quart 启动时机（已核对 AstrBot 加载顺序）**：`core_lifecycle.py` 里 `plugin_manager.reload()`（实例化 Star）
+在 `platform_manager.initialize()`（实例化 botapi adapter）**之前**执行。故 `BotApiStar.__init__` 时
+`runtime().adapter` 尚为 None，不能在那启动 Quart。**方案**：adapter 在 `__init__` 末尾读取插件配置文件
+（`{get_astrbot_config_path()}/{root_dir_name}_config.json`，root_dir_name=`astrbot_plugin_botapi`）
+拿 host/port 并启动单例 Quart。插件配置由 `_conf_schema.json` 声明 schema，plugin_config 是
+AstrBotConfig（`config_path={plugin_config_path}/{root_dir_name}_config.json`）。
+
+`main.py` `BotApiStar.__init__`：
 
 ```python
     def __init__(self, context: Context, config=None):
@@ -142,32 +149,44 @@ Expected: FAIL（`_conf_schema.json` 不存在；`run()` 仍起服务器）
         rt.conversation_manager = context.conversation_manager
         rt.message_history_manager = context.message_history_manager
         ...
-        # 读插件配置（self.config 是插件配置页的 AstrBotConfig）
+        # 插件配置（插件配置页可编辑 host/port/botapi_bindings）
         self._plugin_conf = config if isinstance(config, dict) else {}
-        # 启动单例 Quart（由插件 Star 管理，而非平台 adapter）
-        from quart import Quart
-        # 用一个共享 adapter 或延迟绑定；见 Task 3 完善
-        self._ensure_quart_server()
+```
 
-    def _ensure_quart_server(self):
-        """从插件配置读 host/port 启动单例 Quart 服务器。"""
-        import asyncio
-        from astrbot.core import astrbot_config as _cfg
-        host = self._plugin_conf.get("host") or self._legacy_port_config()[0]
-        port = self._plugin_conf.get("port") or self._legacy_port_config()[1] or 9000
-        adapter = runtime().adapter
-        if adapter is None:
-            return  # adapter 未初始化（测试等），由 load 后启动
-        if not getattr(adapter, "_server_started", False):
-            adapter._server_started = True
-            asyncio.create_task(adapter.app.run_task(host=host, port=port))
+adapter 端启动单例 Quart（`adapter.py` `__init__` 末尾）：
 
-    def _legacy_port_config(self):
-        """兼容迁移：旧平台配置里的 port。返回 (host, port) 或 (None, None)。"""
-        for p in _cfg_singleton.get("platform", []):
-            if p.get("type") == "botapi":
-                return p.get("host"), p.get("port")
-        return None, None
+```python
+        # 单实例化：从插件配置文件读 host/port 启动 Quart
+        try:
+            from astrbot.core.utils.astrbot_path import get_astrbot_config_path
+            conf = AstrBotConfig(
+                config_path=os.path.join(get_astrbot_config_path(),
+                                         "astrbot_plugin_botapi_config.json"),
+                schema=self._load_plugin_schema(),
+            )
+            self._host = conf.get("host") or self._legacy_port()[0] or "0.0.0.0"
+            self._port = conf.get("port") or self._legacy_port()[1] or 9000
+        except Exception:
+            self._host, self._port = self._legacy_port() or ("0.0.0.0", 9000)
+        self._server_started = False
+```
+
+（`_load_plugin_schema` 读插件目录 `_conf_schema.json`；`_legacy_port` 读 `astrbot_config["platform"]` 里
+type=botapi 条目的 host/port。启动任务 `asyncio.create_task(self.app.run_task(host, port))` 在 adapter
+初始化完成、事件循环运行后触发——由 `run()` 改为真正启动？见下。）
+
+**最终决定**：Quart 启动仍由 `run()` 负责（AstrBot PlatformManager 会调用 `inst.run()`），但 host/port
+**从插件配置读取**而非平台配置。`run()` 改为：
+
+```python
+    def run(self):
+        # host/port 来自插件配置（插件配置页），非平台配置
+        return self.app.run_task(host=self._host, port=self._port,
+                                 shutdown_trigger=self._shutdown.wait)
+```
+
+这样既保单实例（AstrBot 每个 botapi platform 条目都调 run()，但 host/port 一致——多条目会起多个
+服务器？需 Task 5 确保只保留一个 botapi platform 条目，或 run() 用模块级锁保证单服务器）。
 ```
 
 （注：此任务的「起单例 Quart」依赖 adapter 已初始化。真实加载顺序是 Star 先于 adapter 实例化？需在 Task 3 核对——若 Star 先于 adapter，则 `_ensure_quart_server` 需在 adapter 就绪后触发（如 adapter.__init__ 或 Star 的异步钩子）。Task 1 先实现 schema + run() no-op + 读配置逻辑，Task 3 完善启动时机。）
@@ -603,8 +622,8 @@ git commit -m "feat(server): 历史/清空/统计读绑定平台 conversation"
 - Test: `astrbot_plugin_botapi/tests/test_singleton.py`（续写）
 
 **Interfaces:**
-- Consumes: Task 1 的 `_ensure_quart_server`；Task 3 的 `_active_platforms`
-- Produces: `BotApiStar` 启动后注入活跃平台到 adapter + 确保 Quart 单例启动（复用 Task 1 的 `_ensure_quart_server`）
+- Consumes: Task 1 的 host/port 从插件配置读取；Task 3 的 `_active_platforms`
+- Produces: `BotApiStar` 启动后注入活跃平台到 adapter；adapter.run() 模块级锁保证单服务器
 
 - [ ] **Step 1: 写失败测试**（追加到 `tests/test_singleton.py`）
 
@@ -643,13 +662,36 @@ Expected: FAIL（`sync_active_platforms` 不存在）
         adapter = runtime().adapter
         if adapter is not None:
             adapter._active_platforms = set(platform_ids)
-
-    def _start_singleton_server(self):
-        """确保单例 Quart 启动（adapter 就绪后调用）。复用 Task 1 的 _ensure_quart_server。"""
-        self._ensure_quart_server()
 ```
 
-（启动时机：`BotApiStar` 初始化时若 adapter 已就绪则直接起；否则提供一个 `_do_stats` 等入口延迟触发，或在 adapter 初始化后由 AstrBot 生命周期调用。真实机制需在实现时核对 Star 与 adapter 的加载顺序——若 adapter 晚于 Star，用「adapter.__init__ 末尾回调 Star」或「首次请求触发」。测试只验证逻辑。）
+（启动时机：`sync_active_platforms` 由 Star 提供，供外部在 `platform_manager.initialize()` 后调用——
+因 `plugin_manager.reload()` 先于 `platform_manager.initialize()`，Star 初始化时 adapter 尚为 None，
+故用延迟注入（如 `_do_stats` 首次请求时拉活跃平台，或 Star 提供异步钩子由核心调用）。）
+
+`adapter.py` 模块级单实例保证：
+
+```python
+# 模块级：一个 AstrBot 只允许一个 botapi 服务器
+import threading
+_server_lock = threading.Lock()
+_SERVER_STARTED = False
+```
+
+`adapter.run()`：
+
+```python
+    def run(self):
+        """host/port 来自插件配置；模块级锁保证即使多个 botapi platform 条目也只起一个服务器。"""
+        global _SERVER_STARTED
+        with _server_lock:
+            if _SERVER_STARTED:
+                return self._shutdown.wait()   # 已起过：返回永不完成协程，避免重复绑定端口
+            _SERVER_STARTED = True
+        return self.app.run_task(host=self._host, port=self._port,
+                                 shutdown_trigger=self._shutdown.wait)
+```
+
+（`terminate()` 复位 `_SERVER_STARTED`。`_host`/`_port` 在 Task 1 的 `__init__` 里从插件配置读取。）
 
 - [ ] **Step 4: 运行测试验证通过**
 
@@ -660,7 +702,7 @@ Expected: PASS
 
 ```bash
 git add tests/test_singleton.py main.py adapter.py
-git commit -m "feat(server): 活跃平台注入 + 单例 Quart 启动时机"
+git commit -m "feat(server): 活跃平台注入 + 单实例 Quart 模块级锁"
 ```
 
 ---
@@ -831,7 +873,7 @@ git commit -m "feat(server): Web 绑定 UI + 版本 bump 3.0.0"
 | Spec 要求 | 对应 Task |
 |---|---|
 | 端口移到插件配置页 | Task 1（_conf_schema.json + Star 读配置起 Quart） |
-| 单实例 botapi | Task 1（run() no-op）+ Task 5（启动时机） |
+| 单实例 botapi | Task 1（adapter 读插件配置 host/port）+ Task 5（模块级锁） |
 | token→platform 绑定表（插件配置页维护） | Task 2（binding_platform_for + bind/unbind 路由） |
 | 绑定后 UMO 复用绑定平台 | Task 3（submit_inbound 设置 UMO） |
 | 历史/清空/统计读绑定平台 conversation | Task 4 |
@@ -847,7 +889,7 @@ git commit -m "feat(server): Web 绑定 UI + 版本 bump 3.0.0"
 - `binding_platform_for(token) -> str | None` 全任务一致（Task 2 定义，Task 3/4/5 使用）。
 - `submit_inbound` 绑定 UMO 格式 `{pid}:FriendMessage:botapi_{scoped_key}` 一致。
 - `send_by_session` 反向解析 `botapi_` 前缀逻辑 Task 6 定义，与既有非前缀逻辑并存。
-- Quart 启动方法统一为 Task 1 的 `_ensure_quart_server`；Task 5 的 `_start_singleton_server` 只是薄封装复用。
+- Quart 启动由 adapter 读插件配置 + run() 模块级锁保证单实例（Task 1 定 host/port 读取，Task 5 定单服务器锁）。
 
 ### 占位符扫描
 
