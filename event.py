@@ -5,6 +5,7 @@ from astrbot.api.event import MessageChain
 
 from .models import SSEEvent
 from .history import persist_assistant_text, persist_assistant_thinking
+from . import sessions as _sessions
 
 TOOL_STATUS_TYPE = "tool_call"
 
@@ -20,7 +21,7 @@ class BotApiMessageEvent(AstrMessageEvent):
         self._text_buf: list = []
 
     async def _broadcast(self, evt: SSEEvent):
-        scoped = self.adapter.scoped_key_for(self.token, self.sid)
+        scoped = _sessions.scoped_key_for(self.adapter, self.token, self.sid)
         evt.data = dict(evt.data or {})
         evt.data["session_id"] = "" if self.sid == "default" else self.sid
         await self.adapter._broadcast_to(scoped, evt)

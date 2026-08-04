@@ -72,20 +72,48 @@ async def test_submit_inbound_scoped_sid(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_event_broadcast_carries_session_id(monkeypatch):
+    import asyncio
     from astrbot_plugin_botapi.event import BotApiMessageEvent
     from astrbot_plugin_botapi.models import SSEEvent
     a = _adapter(monkeypatch)
     a._sse_clients = {}
-    q = __import__("asyncio").Queue(maxsize=10)
+    q = asyncio.Queue(maxsize=10)
     a._sse_clients["tok:abc"] = [q]
+    # _broadcast 走 adapter._broadcast_to(scoped, evt) → adapter._put(q, evt)
+    a._put = lambda qq, evt: qq.put_nowait(evt)
 
-    async def fake_broadcast(scoped, evt):
-        a._sse_clients[scoped][0].put_nowait(evt)
-
-    # 用最小 fake message_obj
     from astrbot.api.platform import MessageType
     msg = SimpleNamespace(sender=SimpleNamespace(user_id="tok"),
                           type=MessageType.FRIEND_MESSAGE)
     meta = SimpleNamespace(id="botapi")
     ev = BotApiMessageEvent("hi", msg, meta, "botapi:FriendMessage:tok:abc", a)
     assert ev.sid == "abc"
+    # 真正调用 _broadcast：验证 scope 路由到 "tok:abc" 队列 + session_id 注入
+    await ev._broadcast(SSEEvent("message", {"x": 1}))
+    got = await q.get()
+    assert got.data["session_id"] == "abc"
+    assert got.data["x"] == 1
+
+
+@pytest.mark.asyncio
+async def test_event_broadcast_default_session_scopes_to_token(monkeypatch):
+    import asyncio
+    from astrbot_plugin_botapi.event import BotApiMessageEvent
+    from astrbot_plugin_botapi.models import SSEEvent
+    a = _adapter(monkeypatch)
+    a._sse_clients = {}
+    q = asyncio.Queue(maxsize=10)
+    a._sse_clients["tok"] = [q]
+    a._put = lambda qq, evt: qq.put_nowait(evt)
+
+    from astrbot.api.platform import MessageType
+    msg = SimpleNamespace(sender=SimpleNamespace(user_id="tok"),
+                          type=MessageType.FRIEND_MESSAGE)
+    meta = SimpleNamespace(id="botapi")
+    ev = BotApiMessageEvent("hi", msg, meta, "botapi:FriendMessage:tok", a)
+    assert ev.sid == "default"
+    await ev._broadcast(SSEEvent("message", {"x": 2}))
+    got = await q.get()
+    assert got.data["session_id"] == ""
+    assert got.data["x"] == 2
+    assert q.empty()  # 不会投到其它队列
