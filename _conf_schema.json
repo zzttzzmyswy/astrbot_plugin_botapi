@@ -1,0 +1,23 @@
+{
+  "host": {
+    "description": "botapi 监听地址",
+    "type": "string",
+    "default": "0.0.0.0"
+  },
+  "port": {
+    "description": "botapi 监听端口",
+    "type": "int",
+    "default": 9000
+  },
+  "botapi_bindings": {
+    "description": "botapi 账户绑定机器人：{token: platform_id}",
+    "type": "object",
+    "items": {
+      "*": {
+        "type": "string",
+        "description": "绑定的平台适配器 id"
+      }
+    },
+    "default": {}
+  }
+}

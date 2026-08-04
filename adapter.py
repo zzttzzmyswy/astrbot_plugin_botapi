@@ -1,5 +1,7 @@
 # adapter.py
 import asyncio
+import json
+import os
 import time
 import uuid
 from collections import defaultdict
@@ -9,6 +11,7 @@ from astrbot.api.platform import (register_platform_adapter, Platform, PlatformM
     AstrBotMessage, MessageMember, MessageType)
 from astrbot.api.event import MessageChain
 from astrbot.core import astrbot_config
+from astrbot.core.config.astrbot_config import AstrBotConfig
 
 from .models import BotApiConfig, SSEEvent
 from .serializer import MessageSerializer
@@ -62,6 +65,39 @@ class BotApiAdapter(Platform):
         self._setup_routes = lambda: _setup_routes(self)
         self._setup_routes()
 
+        # 单实例化：host/port 从插件配置文件读取（插件配置页可编辑），而非本平台配置。
+        # 插件配置 schema 由 _conf_schema.json 声明；AstrBotConfig 会自动创建缺失的配置文件。
+        # 回退链：插件配置 host/port → 旧平台配置（type=botapi 条目）→ 默认 0.0.0.0:9000。
+        try:
+            from astrbot.core.utils.astrbot_path import get_astrbot_config_path
+            conf = AstrBotConfig(
+                config_path=os.path.join(get_astrbot_config_path(),
+                                         "astrbot_plugin_botapi_config.json"),
+                schema=self._load_plugin_schema(),
+            )
+            legacy_host, legacy_port = self._legacy_port()
+            self._host = conf.get("host") or legacy_host or "0.0.0.0"
+            self._port = conf.get("port") or legacy_port or 9000
+        except Exception:
+            legacy_host, legacy_port = self._legacy_port()
+            self._host = legacy_host or "0.0.0.0"
+            self._port = legacy_port or 9000
+        self._server_started = False
+
+    def _load_plugin_schema(self):
+        """读插件目录 _conf_schema.json 的插件配置 schema。"""
+        schema_path = Path(__file__).parent / "_conf_schema.json"
+        if schema_path.exists():
+            return json.loads(schema_path.read_text(encoding="utf-8-sig"))
+        return {}
+
+    def _legacy_port(self):
+        """迁移回退：读旧平台配置（astrbot_config["platform"] 里 type=botapi 条目）的 host/port。"""
+        for p in (astrbot_config.get("platform") or []):
+            if p.get("type") == "botapi":
+                return p.get("host"), int(p.get("port") or 9000)
+        return None, None
+
     def meta(self) -> PlatformMetadata:
         return PlatformMetadata(
             name="botapi",
@@ -73,7 +109,9 @@ class BotApiAdapter(Platform):
         )
 
     def run(self):
-        return self.app.run_task(host=self.cfg.host, port=self.cfg.port,
+        # 单实例化：host/port 来自插件配置（插件配置页），而非平台配置。
+        # 多 botapi platform 条目都会调 run()，但模块级单实例锁由 Task 5 保证只起一个服务器。
+        return self.app.run_task(host=self._host, port=self._port,
                                  shutdown_trigger=self._shutdown.wait)
 
     async def terminate(self) -> None:

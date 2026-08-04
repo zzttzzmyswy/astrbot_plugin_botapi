@@ -52,6 +52,8 @@ class BotApiStar(Star):
         rt.context = context
         rt.conversation_manager = context.conversation_manager
         rt.message_history_manager = context.message_history_manager
+        # 插件配置（插件配置页可编辑 host/port/botapi_bindings），AstrBotConfig 是 dict 子类
+        self._plugin_conf = config if isinstance(config, dict) else {}
         P = "astrbot_plugin_botapi"
         context.register_web_api(f"/{P}/stats", self._stats, ["GET"], "统计")
         context.register_web_api(f"/{P}/accounts", self._accounts, ["GET"], "账户列表")
