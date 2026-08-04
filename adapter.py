@@ -156,9 +156,16 @@ class BotApiAdapter(Platform):
         # session.session_id 是 MessageSession 的第三段（裸 scoped key）：
         # 默认会话="{token}"，分会话="{token}:{sid}"（完整 umo 由 __str__ 拼前缀）。
         sess_id = session.session_id
-        parts = sess_id.split(":")
-        token = parts[0] if len(parts) > 0 else sess_id
-        sid = parts[1] if len(parts) > 1 else "default"
+        # 绑定平台 UMO：第三段带 botapi_ 前缀 → 反向解析回 botapi token
+        if sess_id.startswith("botapi_"):
+            rest = sess_id[len("botapi_"):]
+            parts = rest.split(":")
+            token = parts[0]
+            sid = parts[1] if len(parts) > 1 else "default"
+        else:
+            parts = sess_id.split(":")
+            token = parts[0] if len(parts) > 0 else sess_id
+            sid = parts[1] if len(parts) > 1 else "default"
         mid = f"botapi_proactive_{uuid.uuid4().hex[:12]}"
         payload = await self._serializer.serialize_chain(message_chain, None)
         scoped = _sessions.scoped_key_for(self, token, sid)
