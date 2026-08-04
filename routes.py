@@ -11,6 +11,7 @@ from werkzeug.utils import secure_filename
 from .event import BotApiMessageEvent
 from .history import persist_inbound_text, catchup_events
 from .models import SSEEvent
+from . import sessions as _sessions
 
 
 async def submit_inbound(adapter, token, text, file_ids=None) -> str:
@@ -159,6 +160,53 @@ def _setup_routes(adapter):
         limit = min(int(request.args.get("limit", 50)), 200)
         msgs, has_more = await hist_mod.get_history(adapter.platform_id, token, since, before, limit)
         return jsonify({"messages": msgs, "has_more": has_more})
+
+    @app.get("/api/v1/botapi/sessions")
+    async def list_sessions():
+        token = _extract_token(adapter)
+        return jsonify({"sessions": _sessions.sessions_list(adapter, token),
+                        "default_id": _sessions.DEFAULT_SESSION_ID})
+
+    @app.post("/api/v1/botapi/sessions")
+    async def create_session():
+        token = _extract_token(adapter)
+        data = await request.get_json() or {}
+        name = (data.get("name") or "").strip()
+        if not name:
+            return jsonify({"error": "name_required"}), 400
+        cur = _sessions.sessions_list(adapter, token)
+        if len(cur) >= _sessions.MAX_SESSIONS:
+            return jsonify({"error": "session_limit"}), 400
+        new = {"id": uuid.uuid4().hex[:12], "name": name,
+               "created_at": int(time.time())}
+        cur.append(new)
+        _sessions.save_sessions(adapter, token, cur)
+        return jsonify({"session": new})
+
+    @app.post("/api/v1/botapi/sessions/<sid>/rename")
+    async def rename_session(sid):
+        token = _extract_token(adapter)
+        data = await request.get_json() or {}
+        name = (data.get("name") or "").strip()
+        if not name:
+            return jsonify({"error": "name_required"}), 400
+        cur = _sessions.sessions_list(adapter, token)
+        for x in cur:
+            if x["id"] == sid:
+                x["name"] = name
+                _sessions.save_sessions(adapter, token, cur)
+                return jsonify({"message": "会话已重命名"})
+        return jsonify({"error": "not_found"}), 404
+
+    @app.post("/api/v1/botapi/sessions/<sid>/delete")
+    async def delete_session(sid):
+        token = _extract_token(adapter)
+        if sid == _sessions.DEFAULT_SESSION_ID:
+            return jsonify({"error": "default_not_deletable"}), 400
+        if not any(x["id"] == sid for x in _sessions.sessions_list(adapter, token)):
+            return jsonify({"error": "not_found"}), 404
+        await _sessions.delete_session(adapter, token, sid)
+        return jsonify({"message": "会话已删除"})
 
 
 async def _stream_gen(adapter, token, q, since):
