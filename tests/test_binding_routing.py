@@ -85,3 +85,23 @@ async def test_submit_inbound_unbound_keeps_botapi_umo(monkeypatch):
 
     await routes_mod.submit_inbound(a, "tok", "hi")
     assert committed[0].unified_msg_origin == "botapi:FriendMessage:tok"
+
+
+@pytest.mark.asyncio
+async def test_submit_inbound_bound_inactive_platform_fallback_botapi(monkeypatch):
+    from astrbot_plugin_botapi import routes as routes_mod
+    a = _adapter(monkeypatch)
+    a._active_platforms = set()
+    a.config["botapi_bindings"] = {"tok": "aiocqhttp_main"}
+    committed = []
+
+    async def fake_persist(key, mid, text):
+        pass
+    monkeypatch.setattr(routes_mod, "persist_inbound_text", fake_persist)
+
+    def fake_commit(event):
+        committed.append(event)
+    a.commit_event = fake_commit
+
+    await routes_mod.submit_inbound(a, "tok", "hi")
+    assert committed[0].unified_msg_origin == "botapi:FriendMessage:tok"
