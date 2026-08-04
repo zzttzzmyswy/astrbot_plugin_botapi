@@ -47,6 +47,14 @@ async def submit_inbound(adapter, token, text, file_ids=None, session_id="") -> 
     event = BotApiMessageEvent(message_str=msg.message_str, message_obj=msg,
                                platform_meta=adapter.meta(), session_id=scoped_key,
                                adapter=adapter)
+    # 多机器人绑定：覆写 UMO 使 AstrBot 路由到绑定平台配置文件。
+    # msg.session_id 仍是裸 scoped key（AstrMessageEvent 会拼 {pid}:FriendMessage: 前缀），
+    # 这里覆写的是构造后的完整 UMO，前缀段换成绑定平台（若绑定且平台活跃）。
+    # getattr 防御：旧测试 fake 无 binding_platform_for；真实 BotApiAdapter 均有。
+    _bind_lookup = getattr(adapter, "binding_platform_for", None)
+    bound = _bind_lookup(token) if _bind_lookup else None
+    if bound:
+        event.unified_msg_origin = f"{bound}:FriendMessage:botapi_{scoped_key}"
     event.set_extra("enable_streaming", True)
     await persist_inbound_text(scoped_key, msg.message_id, text)
     adapter.commit_event(event)
