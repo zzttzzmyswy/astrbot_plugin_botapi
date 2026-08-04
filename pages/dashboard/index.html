@@ -20,8 +20,8 @@
       </div>
       <div class="table-container">
         <table>
-          <thead><tr><th>昵称</th><th>Token</th><th>ID(hash)</th><th>状态</th><th>消息</th><th>SSE</th><th>最后活跃</th><th>操作</th></tr></thead>
-          <tbody id="account-list"><tr class="empty-row"><td colspan="8">加载中...</td></tr></tbody>
+          <thead><tr><th>昵称</th><th>Token</th><th>ID(hash)</th><th>状态</th><th>消息</th><th>SSE</th><th>最后活跃</th><th>绑定</th><th>操作</th></tr></thead>
+          <tbody id="account-list"><tr class="empty-row"><td colspan="9">加载中...</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -100,6 +100,19 @@
           <button id="btn-export-md" class="btn btn-primary">Markdown</button>
           <button id="btn-export-json" class="btn btn-secondary">JSON</button>
           <button id="btn-export-cancel" class="btn btn-secondary">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 绑定机器人（替代 prompt，sandbox 无 allow-modals；下拉选活跃平台） -->
+    <div id="modal-bind" class="modal hidden">
+      <div class="modal-content">
+        <h3>绑定机器人</h3>
+        <p id="bind-msg" class="confirm-msg">选择该账户使用的机器人（绑定后账户对话走该平台的 LLM 配置）：</p>
+        <select id="select-bind-platform" class="bind-select"></select>
+        <div class="modal-actions">
+          <button id="btn-bind-save" class="btn btn-primary">绑定</button>
+          <button id="btn-bind-cancel" class="btn btn-secondary">取消</button>
         </div>
       </div>
     </div>

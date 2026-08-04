@@ -112,6 +112,9 @@ class BotApiStar(Star):
             ["POST"],
             "删除会话",
         )
+        context.register_web_api(
+            f"/{P}/platforms", self._platforms, ["GET"], "平台列表"
+        )
 
     # ── helpers ──
 
@@ -165,6 +168,7 @@ class BotApiStar(Star):
         from . import sessions as _sessions
 
         per = []
+        bindings = adapter.config.get("botapi_bindings") or {}
         for token in adapter.cfg.tokens or []:
             platform_id, tok = _sessions.bound_conversation_umo(adapter, token,
                                                                 _sessions.DEFAULT_SESSION_ID)
@@ -183,6 +187,7 @@ class BotApiStar(Star):
                 "token_preview": self._preview(token),
                 "token_hash": self._hash_tok(token),
                 "nickname": adapter.cfg.nicknames.get(token, ""),
+                "bound_platform": bindings.get(token),   # 有效绑定（含未生效回退）都展示，便于 UI 提示
                 "online": bool(sse),
                 "sse_connections": len(sse),
                 "message_count": msg_count,
@@ -194,6 +199,32 @@ class BotApiStar(Star):
             "total_messages": sum(a["message_count"] for a in per),
             "per_account": per,
         }).__dict__
+
+    async def _do_platforms(self):
+        """返回当前可绑定的活跃平台 id 列表。
+
+        优先 adapter._active_platforms（Task 5 注入，PlatformManager 实际在跑的平台），
+        为空时回退到 astrbot_config 里 enable=True 的平台条目（平台就绪前/纯配置模式）。
+        排除 botapi 自身（绑定到自己是无意义的路由回环）。
+        """
+        rt = runtime()
+        adapter = rt.adapter
+        self_id = adapter.platform_id if adapter is not None else None
+        platforms = []
+        if adapter is not None:
+            active = getattr(adapter, "_active_platforms", None)
+            if active:
+                platforms = [p for p in sorted(active) if p != self_id]
+        if not platforms:
+            for p in _cfg_singleton.get("platform", []):
+                if p.get("id") == self_id:
+                    continue
+                if p.get("type") == "botapi":
+                    continue
+                if p.get("enable"):
+                    platforms.append(p["id"])
+            platforms = sorted(set(platforms))
+        return Response().ok({"platforms": platforms}).__dict__
 
     async def _do_create(self, token=None, nickname=""):
         rt = runtime()
@@ -551,6 +582,9 @@ class BotApiStar(Star):
     async def _stats(self):
         return await self._do_stats()
 
+    async def _platforms(self):
+        return await self._do_platforms()
+
     async def _accounts(self):
         rt = runtime()
         adapter = rt.adapter
@@ -558,12 +592,14 @@ class BotApiStar(Star):
             return Response().error("适配器未就绪").__dict__
         from . import sessions as _sessions
 
+        bindings = adapter.config.get("botapi_bindings") or {}
         accs = [
             {
                 "token_preview": self._preview(t),
                 "token_hash": self._hash_tok(t),
                 "nickname": adapter.cfg.nicknames.get(t, ""),
                 "enabled": t not in adapter._disabled_tokens,
+                "bound_platform": bindings.get(t),
                 "online": bool(_sessions.sse_queues_for(adapter, t)),
                 "sse_connections": len(_sessions.sse_queues_for(adapter, t)),
                 "last_active": adapter._last_active.get(t),
