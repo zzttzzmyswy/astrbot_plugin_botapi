@@ -198,7 +198,7 @@ class BotApiStar(Star):
             per.append({
                 "token_preview": self._preview(token),
                 "token_hash": self._hash_tok(token),
-                "bound_platform": adapter.binding_platform_for(token),   # 有效绑定（含未生效回退）都展示，便于 UI 提示
+                "bound_platform": adapter.binding_platform_for(token),   # 仅有效绑定（平台活跃/启用）才显示
                 "online": bool(sse),
                 "sse_connections": len(sse),
                 "message_count": msg_count,

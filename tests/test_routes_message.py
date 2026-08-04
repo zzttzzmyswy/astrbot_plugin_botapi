@@ -74,10 +74,10 @@ async def test_message_returns_message_id_only(monkeypatch):
 async def test_message_rejects_token_not_in_list(monkeypatch):
     """严格列表：token 不在 botapi tokens 里 → 401。"""
     adapter = _make_adapter_with_app(monkeypatch)
-    adapter.cfg.tokens = []   # 空列表 = 拒连
+    adapter.cfg.tokens = ["secret-tok"]   # 非空列表：列表外 token 拒连
     client = adapter.app.test_client()
     r = await client.post("/api/v1/botapi/message", json={"text": "hi"},
-                          headers={"Authorization": "Bearer any-token"})
+                          headers={"Authorization": "Bearer other-token"})
     assert r.status_code == 401
 
 
