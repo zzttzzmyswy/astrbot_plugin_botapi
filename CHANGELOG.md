@@ -10,25 +10,27 @@
 ### 新增
 
 - **单实例 botapi 服务器**：host/port 移入插件配置页（`astrbot_plugin_botapi_config.json`），
-  模块级单实例锁保证一个 AstrBot 只绑定一次端口（多 botapi platform 条目共存不冲突），
-  不再依赖旧平台配置里的 host/port。
-- **token→platform 绑定（多机器人）**：绑定表存于插件配置页 `botapi_bindings`；
-  账户列表每行「绑定」按钮选活跃平台，绑定后该账户的对话（收发消息、历史、清空、
-  统计、会话）路由到绑定平台的 LLM 配置，独立成 `botapi_` 前缀会话；「解绑」恢复
-  默认单机路由。
-- **`GET platforms` 端点**：Web 管理页新增 `astrbot_plugin_botapi/platforms` 返回
-  当前活跃平台 id 列表（优先 adapter 注入的活跃集合，回退 `astrbot_config` 里
-  enable=True 的平台条目），供绑定 UI 下拉。
+  模块级单实例锁保证一个 AstrBot 只绑定一次端口（多 botapi platform 条目共存不冲突）。
+- **token→platform 绑定（多机器人）**：绑定即把账户 token 写入目标平台的 `tokens` 列表
+  （一对一）；botapi 平台条目的 `tokens` 是账户注册表。绑定后该账户的对话（收发消息、
+  历史、清空、统计、会话）路由到绑定平台的 LLM 配置，独立成 `botapi_` 前缀会话；
+  管理页账户行「绑定/解绑」维护。解绑恢复默认单机路由。
+- **`GET platforms` 端点**：Web 管理页返回当前活跃平台 id 列表（优先 adapter 注入的
+  活跃集合，回退 `astrbot_config` 里 enable=True 的平台条目），供绑定 UI 下拉。
 - **账户绑定状态展示**：`stats` 与 `accounts` 响应每条账户新增 `bound_platform` 字段，
   管理页以徽标显示当前绑定平台。
 
 ### Changed
 
-- 未绑定账户保持默认行为：路由到 botapi 平台、`{token}` 会话（与旧版完全一致）。
+- **auth 严格化**：token 必须显式存在于 botapi 平台条目的 `tokens` 列表（空=拒连）。
+- 移除账户昵称/备注（`nicknames`）字段与改名功能；绑定关系不再存独立的
+  `botapi_bindings` 映射（启动时自动迁移到目标平台 tokens 列表）。
 
 ### 兼容性
 
-- 老客户端/老配置无需改动：绑定表为空时行为不变；版本号 2.0.x → 3.0.0。
+- 老客户端/App 无需改动（HTTP API 不变）；绑定表为空时行为不变（默认路由）。
+- 存量 `botapi_bindings` 配置启动时自动迁移；未在 botapi tokens 里的旧 token 需
+  重新加入（auth 严格化）。
 
 ## [2.0.2] - 2026-08-04
 
