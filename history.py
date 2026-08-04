@@ -42,6 +42,10 @@ async def get_conversation_messages(rt, platform_id, token, limit=50):
                 p.get("text", "") for p in content
                 if isinstance(p, dict) and p.get("type") == "text"
             )
+        # 跳过空内容：工具调用帧等 assistant 项 content 为空/None，
+        # 渲染成空气泡是噪音；保留用户消息(可能只有附件语义)。
+        if not content and role != "user":
+            continue
         out.append({
             "message_id": str(idx),
             "role": role or "assistant",

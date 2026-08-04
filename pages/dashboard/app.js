@@ -199,8 +199,8 @@ function esc(s) {
 }
 
 // ── 整页对话（admin 以 token 身份在同一会话发话，轮询 conversation_manager 收回复）──
-// 历史读 conversation_manager（LLM 真实对话），按 (role,content) 去重追加，
-// 避免对话被截断/重排时索引漂移导致重复或丢失。
+// 历史读 conversation_manager（LLM 真实对话上下文）；每次拉取全量重绘消息列表
+// （renderMessages），以服务端返回为准重建 DOM，避免增量去重漂移。
 
 const chat = { hash: "", nick: "", sid: "", timer: null, active: false, rendered: new Set() };
 
@@ -265,6 +265,7 @@ function openChatSession(tokenHash, nickname, sid) {
   chat.sid = sid || "";
   chat.active = true;
   chat.rendered = new Set();
+  pollFailCount = 0;
   document.getElementById("sessions-view").classList.add("hidden");
   document.getElementById("chat-view").classList.remove("hidden");
   document.getElementById("chat-title").textContent = `对话：${chat.nick} / ${chat.sid}`;
@@ -276,6 +277,7 @@ function openChatSession(tokenHash, nickname, sid) {
 function closeChat() {
   chat.active = false;
   stopPoll();
+  pollFailCount = 0;
   document.getElementById("chat-view").classList.add("hidden");
   document.getElementById("sessions-view").classList.remove("hidden");
   renderSessions();
@@ -326,24 +328,47 @@ function wireSessions() {
 
 async function loadHistory() {
   try {
-    const res = await bridge.apiPost(`sessions/${chat.hash}/history`, { limit: 50, session_id: chat.sid });
+    const res = await bridge.apiPost(`sessions/${chat.hash}/history`, { limit: 200, session_id: chat.sid });
     const msgs = res.messages || [];
-    let added = 0;
-    msgs.forEach((m) => { if (appendBubble(m)) added++; });
-    log("loadHistory ok", `msgs=${msgs.length} added=${added}`);
-    if (added) scrollChatBottom();
+    renderMessages(msgs);
+    log("loadHistory ok", `msgs=${msgs.length}`);
   } catch (err) { log("loadHistory ERR", err); toast("加载历史失败: " + (err?.message || err)); }
 }
+
+let pollFailCount = 0;
 
 async function pollOnce() {
   if (!chat.active) return;
   try {
-    const res = await bridge.apiPost(`sessions/${chat.hash}/history`, { limit: 50, session_id: chat.sid });
-    const msgs = res.messages || [];
-    let added = 0;
-    msgs.forEach((m) => { if (appendBubble(m)) added++; });
-    if (added) { log("poll new", added); scrollChatBottom(); }
-  } catch (err) { log("poll ERR", err); }   // 单次失败静默，下个周期重试
+    const res = await bridge.apiPost(`sessions/${chat.hash}/history`, { limit: 200, session_id: chat.sid });
+    pollFailCount = 0;
+    renderMessages(res.messages || []);
+  } catch (err) {
+    // 连续失败达到阈值：停止轮询并提示，避免会话被删/网络中断时无限空转。
+    pollFailCount++;
+    log("poll ERR", err, `fail=${pollFailCount}`);
+    if (pollFailCount >= 3) {
+      stopPoll();
+      chat.active = false;
+      toast("历史拉取连续失败，已停止刷新。请检查会话是否仍存在。");
+    }
+  }
+}
+
+// 全量重绘消息列表：每次拉取都以服务端返回为准重建 DOM，
+// 避免增量去重 Set 无限增长、以及 50 条窗口滑动导致的「旧消息残留 + 新头被
+// 误判重复而跳过」漂移。会话历史来自 conversation_manager（完整 context，
+// 无截断），limit 200 足够覆盖常规对话；超出部分由服务端截尾。
+function renderMessages(msgs) {
+  const box = document.getElementById("chat-messages");
+  box.innerHTML = "";
+  chat.rendered = new Set();
+  let added = 0;
+  for (const m of msgs) {
+    if (appendBubble(m)) added++;
+  }
+  if (added) scrollChatBottom();
+  log("renderMessages", `total=${msgs.length} rendered=${added}`);
 }
 
 function startPoll() {
@@ -373,9 +398,13 @@ async function sendChat() {
   } catch (err) { log("sendChat ERR", err); toast("发送失败: " + (err?.message || err)); }
 }
 
-// 返回 true 表示新气泡已追加，false 表示去重跳过。
+// 返回 true 表示新气泡已追加，false 表示跳过(去重或空内容)。
 function appendBubble(m) {
-  const sig = `${m.role}:${m.content}`;
+  const content = m.content || "";
+  // 跳过空内容气泡：conversation_manager 历史里工具调用帧等 assistant 项
+  // content 可能为空，渲染成空 bot 气泡是噪音。
+  if (!content.trim()) return false;
+  const sig = `${m.role}:${content}`;
   if (chat.rendered.has(sig)) return false;
   chat.rendered.add(sig);
   const box = document.getElementById("chat-messages");
@@ -383,13 +412,13 @@ function appendBubble(m) {
   const role = m.role, typ = m.type;
   let html;
   if (role === "user") {
-    html = `<div class="bubble bubble-user"><div>${esc(m.content || "")}</div><div class="bubble-meta">${esc(ts)}</div></div>`;
+    html = `<div class="bubble bubble-user"><div>${esc(content)}</div><div class="bubble-meta">${esc(ts)}</div></div>`;
   } else if (typ === "thinking") {
-    html = `<details class="bubble bubble-thinking"><summary>💭 思考 · ${esc(ts)}</summary><div class="bubble-thinking-body">${esc(m.content || "")}</div></details>`;
+    html = `<details class="bubble bubble-thinking"><summary>💭 思考 · ${esc(ts)}</summary><div class="bubble-thinking-body">${esc(content)}</div></details>`;
   } else if (typ === "tool_status") {
-    html = `<div class="bubble bubble-tool">🔨 ${esc(m.content || "")}</div>`;
+    html = `<div class="bubble bubble-tool">🔨 ${esc(content)}</div>`;
   } else {
-    html = `<div class="bubble bubble-bot"><div>${esc(m.content || "")}</div><div class="bubble-meta">${esc(ts)}</div></div>`;
+    html = `<div class="bubble bubble-bot"><div>${esc(content)}</div><div class="bubble-meta">${esc(ts)}</div></div>`;
   }
   box.insertAdjacentHTML("beforeend", html);
   return true;

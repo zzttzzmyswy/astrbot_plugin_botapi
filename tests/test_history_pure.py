@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 from datetime import datetime, timezone
 
@@ -117,3 +118,54 @@ async def test_catchup_int_not_lexicographic(monkeypatch):
     evts = await history.catchup_events("botapi", "tok", since="9")
     assert len(evts) == 1
     assert evts[0].data["message_id"] == "10"
+
+
+# ── get_conversation_messages（读 conversation_manager）──
+
+class FakeCM:
+    """模拟 conversation_manager：get_curr_conversation_id + get_conversation。"""
+    def __init__(self, history_items):
+        self._history = history_items
+
+    async def get_curr_conversation_id(self, umo):
+        return "cid_1" if umo == "botapi:FriendMessage:tok" else None
+
+    async def get_conversation(self, umo, cid):
+        return SimpleNamespace(history=json.dumps(self._history))
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_messages_skips_empty_content(monkeypatch):
+    hist = [
+        {"role": "user", "content": "你好"},
+        {"role": "assistant", "content": "这是回复"},
+        {"role": "assistant", "content": None},        # 工具调用帧 → 空 content
+        {"role": "assistant", "content": ""},          # 空字符串
+        {"role": "system", "content": "system prompt"},  # system 跳过
+    ]
+    fake_rt = SimpleNamespace(conversation_manager=FakeCM(hist))
+    monkeypatch.setattr(history, "runtime", lambda: fake_rt)
+
+    msgs = await history.get_conversation_messages(fake_rt, "botapi", "tok", limit=50)
+    assert len(msgs) == 2
+    assert msgs[0]["role"] == "user"
+    assert msgs[0]["content"] == "你好"
+    assert msgs[1]["role"] == "assistant"
+    assert msgs[1]["content"] == "这是回复"
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_messages_empty_history(monkeypatch):
+    fake_rt = SimpleNamespace(conversation_manager=FakeCM([]))
+    monkeypatch.setattr(history, "runtime", lambda: fake_rt)
+    msgs = await history.get_conversation_messages(fake_rt, "botapi", "tok", limit=50)
+    assert msgs == []
+
+
+@pytest.mark.asyncio
+async def test_get_conversation_messages_no_conversation(monkeypatch):
+    # umo 不匹配 → get_curr_conversation_id 返回 None → 空
+    fake_rt = SimpleNamespace(conversation_manager=FakeCM([{"role": "user", "content": "x"}]))
+    monkeypatch.setattr(history, "runtime", lambda: fake_rt)
+    msgs = await history.get_conversation_messages(fake_rt, "botapi", "other", limit=50)
+    assert msgs == []
