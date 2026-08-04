@@ -83,7 +83,10 @@ def _setup_routes(adapter):
         text = (data or {}).get("text", "")
         file_ids = (data or {}).get("file_ids", [])
         session_id = (data or {}).get("session_id", "")
-        message_id = await submit_inbound(adapter, token, text, file_ids, session_id)
+        try:
+            message_id = await submit_inbound(adapter, token, text, file_ids, session_id)
+        except LookupError:
+            return jsonify({"error": "session_not_found"}), 404
         return jsonify({"message_id": message_id})
 
     @app.post("/api/v1/botapi/upload")
@@ -145,7 +148,10 @@ def _setup_routes(adapter):
     async def stream():
         from quart import make_response
         token = _extract_token(adapter)
-        sid = _sessions.resolve_sid(adapter, token, request.args.get("session_id"))
+        try:
+            sid = _sessions.resolve_sid(adapter, token, request.args.get("session_id"))
+        except LookupError:
+            return jsonify({"error": "session_not_found"}), 404
         scoped = _sessions.scoped_key_for(adapter, token, sid)
         q: asyncio.Queue = asyncio.Queue(maxsize=256)
         adapter._sse_clients[scoped].append(q)
@@ -163,7 +169,10 @@ def _setup_routes(adapter):
     async def get_history():
         from . import history as hist_mod
         token = _extract_token(adapter)
-        sid = _sessions.resolve_sid(adapter, token, request.args.get("session_id"))
+        try:
+            sid = _sessions.resolve_sid(adapter, token, request.args.get("session_id"))
+        except LookupError:
+            return jsonify({"error": "session_not_found"}), 404
         scoped = _sessions.scoped_key_for(adapter, token, sid)
         since = request.args.get("since")
         before = request.args.get("before")

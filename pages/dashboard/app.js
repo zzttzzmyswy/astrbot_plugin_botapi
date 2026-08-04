@@ -192,7 +192,11 @@ async function deleteAccount(tokenHash) {
   } catch (err) { toast("删除失败: " + (err?.message || err)); }
 }
 
-function esc(s) { const d = document.createElement("div"); d.textContent = String(s ?? ""); return d.innerHTML; }
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = String(s ?? "");
+  return d.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
 
 // ── 整页对话（admin 以 token 身份在同一会话发话，轮询 conversation_manager 收回复）──
 // 历史读 conversation_manager（LLM 真实对话），按 (role,content) 去重追加，

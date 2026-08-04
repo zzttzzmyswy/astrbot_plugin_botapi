@@ -231,4 +231,56 @@ async def test_rename_non_string_name_400(monkeypatch):
     assert (await r.get_json())["error"] == "name_required"
 
 
+# ── 未知 session_id 必须 404（IMPORTANT 2 回归）──
+
+@pytest.mark.asyncio
+async def test_stream_unknown_session_404(monkeypatch):
+    """GET /stream 未知 session_id 必须 404 session_not_found（不是 500）。"""
+    adapter = _make_adapter(monkeypatch)
+    client = adapter.app.test_client()
+    r = await client.get("/api/v1/botapi/stream?session_id=nope",
+                         headers={"Authorization": "Bearer tok"})
+    assert r.status_code == 404
+    assert (await r.get_json())["error"] == "session_not_found"
+
+
+@pytest.mark.asyncio
+async def test_history_unknown_session_404(monkeypatch):
+    """GET /history 未知 session_id 必须 404 session_not_found（不是 500）。"""
+    adapter = _make_adapter(monkeypatch)
+    client = adapter.app.test_client()
+    r = await client.get("/api/v1/botapi/history?session_id=nope",
+                         headers={"Authorization": "Bearer tok"})
+    assert r.status_code == 404
+    assert (await r.get_json())["error"] == "session_not_found"
+
+
+@pytest.mark.asyncio
+async def test_message_unknown_session_404(monkeypatch):
+    """POST /message 未知 session_id 必须 404 session_not_found（不是 500）。"""
+    adapter = _make_adapter(monkeypatch)
+    client = adapter.app.test_client()
+    r = await client.post("/api/v1/botapi/message",
+                          json={"text": "hi", "session_id": "nope"},
+                          headers={"Authorization": "Bearer tok"})
+    assert r.status_code == 404
+    assert (await r.get_json())["error"] == "session_not_found"
+
+
+@pytest.mark.asyncio
+async def test_message_known_session_ok(monkeypatch):
+    """POST /message 已知 session_id 仍正常返回 message_id（确认 404 未误伤有效会话）。"""
+    adapter = _make_adapter(monkeypatch)
+    cur = S.sessions_list(adapter, "tok")
+    cur.append({"id": "abc", "name": "工作", "created_at": 1})
+    S.save_sessions(adapter, "tok", cur)
+    client = adapter.app.test_client()
+    r = await client.post("/api/v1/botapi/message",
+                          json={"text": "hi", "session_id": "abc"},
+                          headers={"Authorization": "Bearer tok"})
+    assert r.status_code == 200
+    body = await r.get_json()
+    assert "message_id" in body
+
+
 

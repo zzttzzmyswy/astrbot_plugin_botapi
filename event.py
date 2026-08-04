@@ -18,6 +18,9 @@ class BotApiMessageEvent(AstrMessageEvent):
         # session_id 形如 {pid}:FriendMessage:{token}[:{sid}]
         parts = (session_id or "").split(":")
         self.sid = parts[3] if len(parts) > 3 else "default"
+        # 持久化用 scoped key：默认会话 = 裸 token，分会话 = "{token}:{sid}"，
+        # 与入站消息 persist_inbound_text 的 key 一致，保证 /history 能查到本会话回复。
+        self.scoped_key = _sessions.scoped_key_for(self.adapter, self.token, self.sid)
         self._text_buf: list = []
 
     async def _broadcast(self, evt: SSEEvent):
@@ -39,14 +42,14 @@ class BotApiMessageEvent(AstrMessageEvent):
                 await self._broadcast(SSEEvent("message", {
                     "message_id": mid, "type": "text", "subtype": "tool_status", "content": txt,
                     "streaming": False, "final": False, "timestamp": int(time.time())}))
-                await persist_assistant_text(self.token, mid, txt, kind="tool_status")
+                await persist_assistant_text(self.scoped_key, mid, txt, kind="tool_status")
             return
 
         # 普通回复（含 tool_direct_result 工具直答，可带媒体）
         payload = await self.adapter._serializer.serialize_chain(message, self)
         await self._broadcast(SSEEvent("message", {**payload, "streaming": False, "final": True}))
         await self.adapter._push_media(message, self.token, mid, self.sid)
-        await persist_assistant_text(self.token, mid, payload.get("content", ""), kind="final")
+        await persist_assistant_text(self.scoped_key, mid, payload.get("content", ""), kind="final")
 
     async def send_streaming(self, generator, use_fallback=False) -> None:
         await super().send_streaming(generator, use_fallback)
@@ -89,6 +92,6 @@ class BotApiMessageEvent(AstrMessageEvent):
             "message_id": mid, "type": "text", "content": final_text,
             "streaming": False, "final": True, "timestamp": int(time.time())}))
         if thinking:
-            await persist_assistant_thinking(self.token, mid, "".join(thinking))
+            await persist_assistant_thinking(self.scoped_key, mid, "".join(thinking))
         if final_text:
-            await persist_assistant_text(self.token, mid, final_text, kind="final")
+            await persist_assistant_text(self.scoped_key, mid, final_text, kind="final")
