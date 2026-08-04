@@ -19,13 +19,16 @@ async def submit_inbound(adapter, token, text, file_ids=None, session_id="") -> 
     手机 /message 与管理页 /chat 共用。session_id 缺省/空 → 默认会话。
     返回 message_id。"""
     sid = _sessions.resolve_sid(adapter, token, session_id)
-    scoped_umo = _sessions.umo_for(adapter, token, sid)
     scoped_key = _sessions.scoped_key_for(adapter, token, sid)
     _get_or_create_origin(adapter, token)   # 建立 token→origin 映射
     msg = AstrBotMessage()
     msg.type = MessageType.FRIEND_MESSAGE
     msg.self_id = adapter.client_self_id
-    msg.session_id = scoped_umo   # 路由到正确会话的关键
+    # AstrMessageEvent 会把 session_id 当作「裸第三段」再拼 {pid}:FriendMessage: 前缀，
+    # 故这里必须传 scoped_key(默认="{token}"，分会话="{token}:{sid}")而非完整 umo，
+    # 否则 unified_msg_origin 会双重前缀(如 botapi:FriendMessage:botapi:FriendMessage:...)，
+    # 导致会话上下文路由错乱、管理页会话 id 显示错误。
+    msg.session_id = scoped_key
     msg.message_id = f"botapi_{uuid.uuid4().hex[:12]}"
     msg.sender = MessageMember(user_id=token, nickname="User")
     msg.timestamp = int(time.time())
@@ -42,7 +45,7 @@ async def submit_inbound(adapter, token, text, file_ids=None, session_id="") -> 
     msg.raw_message = {"text": text, "file_ids": file_ids or []}
 
     event = BotApiMessageEvent(message_str=msg.message_str, message_obj=msg,
-                               platform_meta=adapter.meta(), session_id=scoped_umo,
+                               platform_meta=adapter.meta(), session_id=scoped_key,
                                adapter=adapter)
     event.set_extra("enable_streaming", True)
     await persist_inbound_text(scoped_key, msg.message_id, text)

@@ -6,6 +6,8 @@ import pytest
 
 from astrbot.api.event import MessageChain
 from astrbot.api.message_components import Plain, Image
+from astrbot.api.platform import MessageType
+from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform import platform as _platmod
 from astrbot_plugin_botapi.adapter import BotApiAdapter
 from astrbot_plugin_botapi.models import SSEEvent
@@ -37,7 +39,9 @@ def _patch_metrics(monkeypatch):
 
 
 def _session(umo):
-    return SimpleNamespace(session_id=umo)
+    """模拟 AstrBot MessageSession：from_str 把 umo 切成三段，.session_id 是第三段。"""
+    platform_id, mtype, session_id = umo.split(":", 2)
+    return MessageSession(platform_id, MessageType(mtype), session_id)
 
 
 def _drain(q: asyncio.Queue) -> list:

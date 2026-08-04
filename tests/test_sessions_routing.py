@@ -42,7 +42,8 @@ async def test_submit_inbound_routes_to_session(monkeypatch):
 
     a.commit_event = fake_commit
     await routes_mod.submit_inbound(a, "tok", "hi")
-    assert captured["session_id"] == "botapi:FriendMessage:tok"
+    # AstrMessageEvent 会再拼 {pid}:FriendMessage: 前缀，故 msg.session_id 应为裸 scoped key
+    assert captured["session_id"] == "tok"
     assert captured["sender"] == "tok"
     assert captured["key"] == "tok"
 
@@ -66,8 +67,46 @@ async def test_submit_inbound_scoped_sid(monkeypatch):
 
     a.commit_event = fake_commit
     await routes_mod.submit_inbound(a, "tok", "hi", session_id="abc")
-    assert captured["session_id"] == "botapi:FriendMessage:tok:abc"
+    # 分会话：msg.session_id 为裸 scoped key "tok:abc"，AstrMessageEvent 拼前缀成完整 umo
+    assert captured["session_id"] == "tok:abc"
     assert captured["key"] == "tok:abc"
+
+
+@pytest.mark.asyncio
+async def test_submit_inbound_unified_origin_single_prefix(monkeypatch):
+    """回归：AstrMessageEvent.unified_msg_origin 必须只有一层 {pid}:FriendMessage: 前缀。
+
+    旧 bug：submit_inbound 把完整 umo 传给 AstrMessageEvent 的 session_id，
+    导致拼出 botapi:FriendMessage:botapi:FriendMessage:{token} 双重前缀，
+    会话上下文路由错乱、管理页 Session ID 显示错误。
+    """
+    from astrbot_plugin_botapi import routes as routes_mod
+    a = _adapter(monkeypatch)
+
+    async def fake_persist(key, mid, text):
+        pass
+
+    monkeypatch.setattr(routes_mod, "persist_inbound_text", fake_persist)
+    committed = []
+
+    def fake_commit(event):
+        committed.append(event)
+
+    a.commit_event = fake_commit
+    # 先建分会话 abc（submit_inbound 的 resolve_sid 需要它存在）
+    cur = S.sessions_list(a, "tok")
+    cur.append({"id": "abc", "name": "x", "created_at": 1})
+    S.save_sessions(a, "tok", cur)
+    # 默认会话 + 分会话各验证一次
+    await routes_mod.submit_inbound(a, "tok", "hi")
+    await routes_mod.submit_inbound(a, "tok", "hi2", session_id="abc")
+    assert len(committed) == 2
+    # 完整 umo 由 AstrMessageEvent 拼出，只一层前缀
+    assert committed[0].unified_msg_origin == "botapi:FriendMessage:tok"
+    assert committed[1].unified_msg_origin == "botapi:FriendMessage:tok:abc"
+    # 不能被双重前缀污染
+    assert committed[0].unified_msg_origin.count("botapi:FriendMessage:") == 1
+    assert committed[1].unified_msg_origin.count("botapi:FriendMessage:") == 1
 
 
 @pytest.mark.asyncio
@@ -86,7 +125,9 @@ async def test_event_broadcast_carries_session_id(monkeypatch):
     msg = SimpleNamespace(sender=SimpleNamespace(user_id="tok"),
                           type=MessageType.FRIEND_MESSAGE)
     meta = SimpleNamespace(id="botapi")
-    ev = BotApiMessageEvent("hi", msg, meta, "botapi:FriendMessage:tok:abc", a)
+    # BotApiMessageEvent 收到的 session_id 是裸 scoped key（"tok:abc"），
+    # AstrMessageEvent 会再拼 {pid}:FriendMessage: 前缀成完整 umo。
+    ev = BotApiMessageEvent("hi", msg, meta, "tok:abc", a)
     assert ev.sid == "abc"
     # 真正调用 _broadcast：验证 scope 路由到 "tok:abc" 队列 + session_id 注入
     await ev._broadcast(SSEEvent("message", {"x": 1}))
@@ -110,7 +151,7 @@ async def test_event_broadcast_default_session_scopes_to_token(monkeypatch):
     msg = SimpleNamespace(sender=SimpleNamespace(user_id="tok"),
                           type=MessageType.FRIEND_MESSAGE)
     meta = SimpleNamespace(id="botapi")
-    ev = BotApiMessageEvent("hi", msg, meta, "botapi:FriendMessage:tok", a)
+    ev = BotApiMessageEvent("hi", msg, meta, "tok", a)
     assert ev.sid == "default"
     await ev._broadcast(SSEEvent("message", {"x": 2}))
     got = await q.get()

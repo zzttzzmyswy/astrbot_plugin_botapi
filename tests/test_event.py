@@ -133,7 +133,7 @@ async def test_send_scoped_session_persists_under_scoped_key(monkeypatch):
     """分会话里的回复必须按 scoped key "tok:abc" 持久化（与入站 key 一致），
     不能落到裸 token。"""
     event, received, persisted, keys = _setup(monkeypatch,
-                                              session_id="botapi:FriendMessage:tok:abc")
+                                              session_id="tok:abc")
     assert event.sid == "abc"
     assert event.scoped_key == "tok:abc"
     await event.send(MessageChain([Plain("scoped answer")]))
@@ -145,7 +145,7 @@ async def test_send_scoped_session_persists_under_scoped_key(monkeypatch):
 async def test_send_scoped_session_streaming_thinking_scoped_key(monkeypatch):
     """分会话流式回复（final+thinking）必须按 scoped key "tok:abc" 持久化。"""
     event, received, persisted, keys = _setup(monkeypatch,
-                                              session_id="botapi:FriendMessage:tok:abc")
+                                              session_id="tok:abc")
     assert event.scoped_key == "tok:abc"
 
     async def gen():

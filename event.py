@@ -15,9 +15,10 @@ class BotApiMessageEvent(AstrMessageEvent):
         super().__init__(message_str, message_obj, platform_meta, session_id)
         self.adapter = adapter
         self.token = message_obj.sender.user_id
-        # session_id 形如 {pid}:FriendMessage:{token}[:{sid}]
+        # session_id 为 scoped key（裸第三段）：默认会话="{token}"，分会话="{token}:{sid}"。
+        # AstrMessageEvent 会再拼 {pid}:FriendMessage: 前缀成 unified_msg_origin。
         parts = (session_id or "").split(":")
-        self.sid = parts[3] if len(parts) > 3 else "default"
+        self.sid = parts[1] if len(parts) > 1 else "default"
         # 持久化用 scoped key：默认会话 = 裸 token，分会话 = "{token}:{sid}"，
         # 与入站消息 persist_inbound_text 的 key 一致，保证 /history 能查到本会话回复。
         self.scoped_key = _sessions.scoped_key_for(self.adapter, self.token, self.sid)

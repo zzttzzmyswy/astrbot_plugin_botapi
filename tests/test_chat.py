@@ -51,7 +51,8 @@ async def test_submit_inbound_builds_and_commits(monkeypatch):
     assert seen["persist"] == ("t1", mid, "你好")
     assert adapter.committed, "event 应被 commit"
     evt = adapter.committed[0]
-    assert evt.session_id == "botapi:FriendMessage:t1"
+    # session_id 是裸 scoped key（默认=t1）；AstrMessageEvent 会拼成完整 umo
+    assert evt.session_id == "t1"
     assert evt.message_obj.sender.user_id == "t1"
     assert evt.message_obj.message_str == "你好"
     assert evt.get_extra("enable_streaming") is True

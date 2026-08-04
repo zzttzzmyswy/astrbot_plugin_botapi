@@ -84,11 +84,12 @@ class BotApiAdapter(Platform):
 
     async def send_by_session(self, session, message_chain) -> None:
         await super().send_by_session(session, message_chain)
-        # session.session_id 为统一消息源 umo：{pid}:FriendMessage:{token}[:{sid}]
+        # session.session_id 是 MessageSession 的第三段（裸 scoped key）：
+        # 默认会话="{token}"，分会话="{token}:{sid}"（完整 umo 由 __str__ 拼前缀）。
         sess_id = session.session_id
         parts = sess_id.split(":")
-        token = parts[2] if len(parts) > 2 else sess_id
-        sid = parts[3] if len(parts) > 3 else "default"
+        token = parts[0] if len(parts) > 0 else sess_id
+        sid = parts[1] if len(parts) > 1 else "default"
         mid = f"botapi_proactive_{uuid.uuid4().hex[:12]}"
         payload = await self._serializer.serialize_chain(message_chain, None)
         scoped = _sessions.scoped_key_for(self, token, sid)
