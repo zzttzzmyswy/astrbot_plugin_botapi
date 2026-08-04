@@ -66,7 +66,7 @@ def _make_star(monkeypatch, tokens=None, bindings=None, platforms=None):
                 {
                     "id": "botapi",
                     "tokens": list(tokens or []),
-                    "botapi_bindings": binds,
+                    "botapi_bindings": dict(binds),
                 }
             ]
         )
@@ -137,3 +137,37 @@ async def test_routes_registered(monkeypatch):
     routes = {r[0] for r in registered}
     assert "/astrbot_plugin_botapi/accounts/<token_hash>/bind" in routes
     assert "/astrbot_plugin_botapi/accounts/<token_hash>/unbind" in routes
+
+
+@pytest.mark.asyncio
+async def test_bind_adapter_not_ready(monkeypatch):
+    """Test that _do_bind returns error when adapter is None."""
+    ctx, registered = _fake_context()
+    star = BotApiStar(ctx, None)
+    from astrbot_plugin_botapi import runtime as rt_mod
+
+    rt = rt_mod.runtime()
+    rt.adapter = None  # adapter not ready
+    res = await star._do_bind(_hash("a"), "aiocqhttp_main")
+    assert res["status"] == "error"
+    assert "适配器未就绪" in res["message"]
+
+
+@pytest.mark.asyncio
+async def test_bind_with_stubbed_persist_fails(monkeypatch):
+    """Verify that persistence write is tested: stub _persist_bindings and confirm test fails."""
+    star, adapter, fake_cfg, _ = _make_star(monkeypatch, tokens=["a"])
+
+    # Stub _persist_bindings to no-op BEFORE calling _do_bind
+    star._persist_bindings = lambda adapter: None
+
+    res = await star._do_bind(_hash("a"), "aiocqhttp_main")
+    assert res["status"] == "ok"
+    assert adapter.config["botapi_bindings"]["a"] == "aiocqhttp_main"
+
+    # Now the platform subtree should NOT have been updated (since we stubbed persist)
+    # This proves the original test was passing because of the separate copy (dict(binds))
+    with pytest.raises(KeyError):
+        _ = fake_cfg["platform"][0]["botapi_bindings"]["a"]
+
+
