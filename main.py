@@ -65,6 +65,12 @@ class BotApiStar(Star):
             f"/{P}/accounts/<token_hash>/delete", self._delete, ["POST"], "删除账户"
         )
         context.register_web_api(
+            f"/{P}/accounts/<token_hash>/bind", self._bind, ["POST"], "绑定机器人"
+        )
+        context.register_web_api(
+            f"/{P}/accounts/<token_hash>/unbind", self._unbind, ["POST"], "解绑机器人"
+        )
+        context.register_web_api(
             f"/{P}/accounts/<token_hash>/status", self._toggle, ["POST"], "启停账户"
         )
         context.register_web_api(
@@ -128,6 +134,14 @@ class BotApiStar(Star):
         adapter.config["nicknames"] = dict(new_nicknames)
         adapter.cfg.tokens = list(new_tokens)
         adapter.cfg.nicknames = dict(new_nicknames)
+        _cfg_singleton.save_config()
+
+    def _persist_bindings(self, adapter):
+        """把 adapter.config 的绑定表同步到 astrbot_config 平台子树并落盘（与 tokens/sessions 同模式）。"""
+        for p in _cfg_singleton.get("platform", []):
+            if p.get("id") == adapter.config.get("id"):
+                p["botapi_bindings"] = adapter.config.get("botapi_bindings") or {}
+                break
         _cfg_singleton.save_config()
 
     # ── _do_* helpers（纯逻辑，可直接测试）──
@@ -213,6 +227,41 @@ class BotApiStar(Star):
         if hasattr(adapter, "_token_to_origin"):
             adapter._token_to_origin.pop(target, None)
         return Response().ok({"message": "账户已删除"}).__dict__
+
+    async def _do_bind(self, token_hash, platform_id):
+        """绑定 token → 目标平台（多机器人路由）。"""
+        rt = runtime()
+        adapter = rt.adapter
+        if not adapter:
+            return Response().error("适配器未就绪").__dict__
+        target = next(
+            (t for t in (adapter.cfg.tokens or []) if self._hash_tok(t) == token_hash),
+            None,
+        )
+        if not target:
+            return Response().error("未找到账户").__dict__
+        if not platform_id:
+            return Response().error("platform_id 不能为空").__dict__
+        adapter.bind_token(target, platform_id)
+        # 持久化绑定表到平台子树
+        self._persist_bindings(adapter)
+        return Response().ok({"message": "绑定成功"}).__dict__
+
+    async def _do_unbind(self, token_hash):
+        """解绑 token（恢复默认单机路由）。"""
+        rt = runtime()
+        adapter = rt.adapter
+        if not adapter:
+            return Response().error("适配器未就绪").__dict__
+        target = next(
+            (t for t in (adapter.cfg.tokens or []) if self._hash_tok(t) == token_hash),
+            None,
+        )
+        if not target:
+            return Response().error("未找到账户").__dict__
+        adapter.unbind_token(target)
+        self._persist_bindings(adapter)
+        return Response().ok({"message": "已解绑"}).__dict__
 
     async def _do_toggle(self, token_hash, disabled):
         rt = runtime()
@@ -524,6 +573,14 @@ class BotApiStar(Star):
 
     async def _delete(self, token_hash):
         return await self._do_delete(token_hash)
+
+    async def _bind(self, token_hash):
+        data = await request.get_json()
+        platform_id = (data or {}).get("platform_id", "")
+        return await self._do_bind(token_hash, platform_id)
+
+    async def _unbind(self, token_hash):
+        return await self._do_unbind(token_hash)
 
     async def _toggle(self, token_hash):
         data = await request.get_json()

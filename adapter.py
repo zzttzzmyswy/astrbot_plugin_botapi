@@ -50,6 +50,13 @@ class BotApiAdapter(Platform):
         self.platform_id = self.meta().id
         self._token_to_origin: dict = {}
         self._sse_clients: dict = defaultdict(list)
+        # token→platform 绑定表：存 adapter.config（经 astrbot_config 平台子树持久化，
+        # 不经过插件配置 schema，避免 check_config_integrity 剔除任意键）。
+        # 空键确保 config 里始终存在 botapi_bindings；绑定内容 Task 5 前从旧配置迁移。
+        self.config.setdefault("botapi_bindings", {})
+        # 活跃平台 id 集合（PlatformManager._inst_map），Task 5 注入真实值；
+        # 绑定查询时若目标平台不在活跃集合则回退（未绑定处理）。
+        self._active_platforms: set = set()
         self._disabled_tokens: set = set()
         self._last_active: dict = {}
         self._uploaded_files: dict = {}
@@ -176,3 +183,26 @@ class BotApiAdapter(Platform):
                         "streaming": False, "final": False, "timestamp": int(time.time()),
                         "session_id": "" if sid == "default" else sid}
                 self._put(q, SSEEvent("message", data))
+
+    # ── token→platform 绑定（多机器人）──
+
+    def binding_platform_for(self, token: str) -> str | None:
+        """返回 token 绑定的 platform_id；未绑定或平台不活跃返回 None。"""
+        bindings = self.config.get("botapi_bindings") or {}
+        pid = bindings.get(token)
+        if not pid:
+            return None
+        active = getattr(self, "_active_platforms", None)
+        if active is not None and pid not in active:
+            return None
+        return pid
+
+    def bind_token(self, token: str, platform_id: str) -> None:
+        bindings = dict(self.config.get("botapi_bindings") or {})
+        bindings[token] = platform_id
+        self.config["botapi_bindings"] = bindings
+
+    def unbind_token(self, token: str) -> None:
+        bindings = dict(self.config.get("botapi_bindings") or {})
+        bindings.pop(token, None)
+        self.config["botapi_bindings"] = bindings
