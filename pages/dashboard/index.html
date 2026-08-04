@@ -26,6 +26,21 @@
       </div>
     </section>
 
+    <!-- 会话列表视图（账户 → 会话下钻） -->
+    <section id="sessions-view" class="hidden">
+      <div class="chat-header">
+        <button id="btn-sessions-back" class="btn btn-sm btn-secondary">← 返回</button>
+        <span id="sessions-title" class="chat-title">会话</span>
+        <button id="btn-sessions-add" class="btn btn-sm btn-primary" style="margin-left:auto">+ 新建会话</button>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead><tr><th>会话名</th><th>创建时间</th><th>ID</th><th>操作</th></tr></thead>
+          <tbody id="session-list"><tr class="empty-row"><td colspan="4">加载中...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- 整页对话视图 -->
     <section id="chat-view" class="hidden">
       <div class="chat-header">

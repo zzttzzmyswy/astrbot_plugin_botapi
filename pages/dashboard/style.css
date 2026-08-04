@@ -56,3 +56,9 @@ code { background:var(--bg); padding:2px 6px; border-radius:4px; font-size:12px;
 .chat-input-row { display:flex; gap:8px; align-items:flex-end; }
 .chat-input-row textarea { flex:1; resize:none; padding:10px 12px; border:1px solid var(--border); border-radius:8px; font-size:14px; font-family:inherit; background:var(--card-bg); color:var(--text); max-height:120px; }
 .chat-input-row textarea:focus { outline:none; border-color:var(--primary); }
+
+/* ── 会话列表视图 ── */
+#sessions-view { display:flex; flex-direction:column; gap:12px; }
+#sessions-view.hidden { display:none; }
+.session-meta { color:var(--text-secondary); font-size:12px; }
+.btn:disabled { opacity:0.5; cursor:not-allowed; }

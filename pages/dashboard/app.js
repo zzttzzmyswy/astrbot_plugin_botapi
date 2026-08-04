@@ -57,6 +57,7 @@ async function init() {
   setupToolbar();
   setupChat();
   wireDelegation();
+  wireSessions();
   if (!bridge) { showStatus("Bridge 未就绪（请在 WebUI 插件页内打开此页面）"); log("no bridge"); return; }
   try {
     await withTimeout(bridge.ready(), 8000, "Bridge 握手超时（是否在 WebUI 插件页内打开？）");
@@ -116,7 +117,7 @@ function wireDelegation() {
     if (action === "nickname") await setNickname(hash, nick);
     else if (action === "delete") await deleteAccount(hash);
     else if (action === "export") openExport(hash, nick);
-    else if (action === "chat") openChat(hash, nick);
+    else if (action === "chat") openSessions(hash, nick);
   });
 }
 
@@ -197,17 +198,72 @@ function esc(s) { const d = document.createElement("div"); d.textContent = Strin
 // 历史读 conversation_manager（LLM 真实对话），按 (role,content) 去重追加，
 // 避免对话被截断/重排时索引漂移导致重复或丢失。
 
-const chat = { hash: "", nick: "", timer: null, active: false, rendered: new Set() };
+const chat = { hash: "", nick: "", sid: "", timer: null, active: false, rendered: new Set() };
 
-function openChat(tokenHash, nickname) {
-  log("openChat", tokenHash, nickname);
+// ── 会话列表（账户 → 会话下钻）──
+// 每账户可建多个会话；进入某会话后 chat.sid 置为对应 sid，
+// loadHistory/pollOnce/sendChat 的请求体都会带 session_id。
+
+const sessions = { hash: "", nick: "", defaultId: "default" };
+
+function openSessions(tokenHash, nickname) {
+  log("openSessions", tokenHash, nickname);
+  sessions.hash = tokenHash;
+  sessions.nick = nickname || tokenHash;
+  document.getElementById("main-view").classList.add("hidden");
+  document.getElementById("sessions-view").classList.remove("hidden");
+  document.getElementById("sessions-title").textContent = `会话：${sessions.nick}`;
+  renderSessions();
+}
+
+function closeSessions() {
+  stopPoll();
+  chat.active = false;
+  document.getElementById("sessions-view").classList.add("hidden");
+  document.getElementById("main-view").classList.remove("hidden");
+}
+
+async function renderSessions() {
+  const tbody = document.getElementById("session-list");
+  tbody.innerHTML = '<tr class="empty-row"><td colspan="4">加载中...</td></tr>';
+  try {
+    const res = await bridge.apiGet(`sessions/${sessions.hash}`);
+    sessions.defaultId = res.default_id || "default";
+    const list = res.sessions || [];
+    if (!list.length) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="4">暂无会话</td></tr>';
+      return;
+    }
+    tbody.innerHTML = list.map(s => {
+      const isDefault = s.id === sessions.defaultId;
+      return `
+        <tr>
+          <td>${esc(s.name || s.id)}</td>
+          <td class="session-meta">${s.created_at ? new Date(s.created_at * 1000).toLocaleString('zh-CN') : '-'}</td>
+          <td><code>${esc(s.id)}</code></td>
+          <td>
+            <button class="btn btn-sm btn-primary" data-saction="enter" data-sid="${esc(s.id)}">进入对话</button>
+            <button class="btn btn-sm btn-secondary" data-saction="rename" data-sid="${esc(s.id)}">改名</button>
+            ${isDefault ? '' : `<button class="btn btn-sm btn-danger" data-saction="delete" data-sid="${esc(s.id)}">删除</button>`}
+          </td>
+        </tr>`;
+    }).join('');
+  } catch (err) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="4">加载失败: ${esc(err?.message || err)}</td></tr>`;
+    log("renderSessions ERR", err);
+  }
+}
+
+function openChatSession(tokenHash, nickname, sid) {
+  log("openChatSession", tokenHash, nickname, sid);
   chat.hash = tokenHash;
   chat.nick = nickname || tokenHash;
+  chat.sid = sid || "";
   chat.active = true;
   chat.rendered = new Set();
-  document.getElementById("main-view").classList.add("hidden");
+  document.getElementById("sessions-view").classList.add("hidden");
   document.getElementById("chat-view").classList.remove("hidden");
-  document.getElementById("chat-title").textContent = `对话：${chat.nick}`;
+  document.getElementById("chat-title").textContent = `对话：${chat.nick} / ${chat.sid}`;
   document.getElementById("chat-messages").innerHTML = "";
   loadHistory();
   startPoll();
@@ -217,12 +273,56 @@ function closeChat() {
   chat.active = false;
   stopPoll();
   document.getElementById("chat-view").classList.add("hidden");
-  document.getElementById("main-view").classList.remove("hidden");
+  document.getElementById("sessions-view").classList.remove("hidden");
+  renderSessions();
+}
+
+async function createSession(tokenHash) {
+  const name = await promptDialog("");
+  if (name === null) return;
+  if (!name) { toast("会话名称不能为空"); return; }
+  try {
+    await bridge.apiPost(`sessions/${tokenHash}`, { name });
+    await renderSessions();
+  } catch (err) { toast("新建失败: " + (err?.message || err)); }
+}
+
+async function renameSession(tokenHash, sid, current) {
+  const name = await promptDialog(current || "");
+  if (name === null) return;
+  if (!name) { toast("会话名称不能为空"); return; }
+  try {
+    await bridge.apiPost(`sessions/${tokenHash}/${sid}/rename`, { name });
+    await renderSessions();
+  } catch (err) { toast("改名失败: " + (err?.message || err)); }
+}
+
+async function deleteSession(tokenHash, sid) {
+  if (!(await confirmDialog(`确定删除该会话？此操作不可撤销。`))) return;
+  try {
+    await bridge.apiPost(`sessions/${tokenHash}/${sid}/delete`, {});
+    if (chat.active && chat.sid === sid) closeChat();
+    else await renderSessions();
+  } catch (err) { toast("删除失败: " + (err?.message || err)); }
+}
+
+function wireSessions() {
+  document.getElementById("btn-sessions-back").addEventListener("click", closeSessions);
+  document.getElementById("btn-sessions-add").addEventListener("click", () => createSession(sessions.hash));
+  document.getElementById("session-list").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-saction]");
+    if (!btn) return;
+    const action = btn.dataset.saction;
+    const sid = btn.dataset.sid;
+    if (action === "enter") openChatSession(sessions.hash, sessions.nick, sid);
+    else if (action === "rename") await renameSession(sessions.hash, sid, "");
+    else if (action === "delete") await deleteSession(sessions.hash, sid);
+  });
 }
 
 async function loadHistory() {
   try {
-    const res = await bridge.apiPost(`sessions/${chat.hash}/history`, { limit: 50 });
+    const res = await bridge.apiPost(`sessions/${chat.hash}/history`, { limit: 50, session_id: chat.sid });
     const msgs = res.messages || [];
     let added = 0;
     msgs.forEach((m) => { if (appendBubble(m)) added++; });
@@ -234,7 +334,7 @@ async function loadHistory() {
 async function pollOnce() {
   if (!chat.active) return;
   try {
-    const res = await bridge.apiPost(`sessions/${chat.hash}/history`, { limit: 50 });
+    const res = await bridge.apiPost(`sessions/${chat.hash}/history`, { limit: 50, session_id: chat.sid });
     const msgs = res.messages || [];
     let added = 0;
     msgs.forEach((m) => { if (appendBubble(m)) added++; });
@@ -264,7 +364,7 @@ async function sendChat() {
   ta.style.height = "auto";
   log("sendChat", JSON.stringify({ hash: chat.hash, text }));
   try {
-    await bridge.apiPost(`sessions/${chat.hash}/chat`, { text });
+    await bridge.apiPost(`sessions/${chat.hash}/chat`, { text, session_id: chat.sid });
     await pollOnce();   // 立即拉一次（用户行+回复随 pipeline 落库后即显示）
   } catch (err) { log("sendChat ERR", err); toast("发送失败: " + (err?.message || err)); }
 }
