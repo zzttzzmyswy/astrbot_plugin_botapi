@@ -171,7 +171,8 @@ def _setup_routes(adapter):
     async def create_session():
         token = _extract_token(adapter)
         data = await request.get_json() or {}
-        name = (data.get("name") or "").strip()
+        raw_name = data.get("name")
+        name = (raw_name.strip() if isinstance(raw_name, str) else "").strip()
         if not name:
             return jsonify({"error": "name_required"}), 400
         cur = _sessions.sessions_list(adapter, token)
@@ -187,7 +188,8 @@ def _setup_routes(adapter):
     async def rename_session(sid):
         token = _extract_token(adapter)
         data = await request.get_json() or {}
-        name = (data.get("name") or "").strip()
+        raw_name = data.get("name")
+        name = (raw_name.strip() if isinstance(raw_name, str) else "").strip()
         if not name:
             return jsonify({"error": "name_required"}), 400
         cur = _sessions.sessions_list(adapter, token)

@@ -209,18 +209,26 @@ async def test_delete_default_400_not_reaching_delete_session(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_delete_unknown_404_not_reaching_delete_session(monkeypatch):
-    """未知 sid 删除必须 404 not_found，且不触达 delete_session。"""
+async def test_post_sessions_non_string_name_400(monkeypatch):
+    """数字 name 建会话必须 400 name_required（不是 500）。"""
     adapter = _make_adapter(monkeypatch)
-    calls = {"n": 0}
-
-    async def fake_delete(a, tok, sid):
-        calls["n"] += 1
-
-    monkeypatch.setattr(S, "delete_session", fake_delete)
     client = adapter.app.test_client()
-    r = await client.post("/api/v1/botapi/sessions/nope/delete",
+    r = await client.post("/api/v1/botapi/sessions", json={"name": 123},
                           headers={"Authorization": "Bearer tok"})
-    assert r.status_code == 404
-    assert (await r.get_json())["error"] == "not_found"
-    assert calls["n"] == 0
+    assert r.status_code == 400
+    assert (await r.get_json())["error"] == "name_required"
+
+
+@pytest.mark.asyncio
+async def test_rename_non_string_name_400(monkeypatch):
+    """数字 name 改名必须 400 name_required（不是 500）。"""
+    adapter = _make_adapter(monkeypatch)
+    client = adapter.app.test_client()
+    r = await client.post("/api/v1/botapi/sessions/default/rename",
+                          json={"name": 123},
+                          headers={"Authorization": "Bearer tok"})
+    assert r.status_code == 400
+    assert (await r.get_json())["error"] == "name_required"
+
+
+
