@@ -1,7 +1,7 @@
 # sessions.py — 会话元数据纯逻辑 + 持久化（服务端权威源）
 import time
 
-from astrbot.core import astrbot_config
+from astrbot.core import astrbot_config, logger
 
 from .runtime import runtime
 
@@ -39,7 +39,7 @@ def save_sessions(adapter, token: str, sessions: list) -> None:
     try:
         astrbot_config.save_config()
     except Exception:
-        pass
+        logger.warning("[BotAPI] save_config 失败: 会话变更可能未持久化")
 
 
 def umo_for(adapter, token: str, sid: str) -> str:
@@ -76,6 +76,8 @@ def sse_queues_for(adapter, token: str) -> list:
 
 async def delete_session(adapter, token: str, sid: str) -> None:
     """删除会话：删 conversation（含会话 umo）+ 断 SSE + 从存储移除。"""
+    if sid == DEFAULT_SESSION_ID:
+        raise LookupError(f"cannot delete default session: {sid}")
     scoped_umo = umo_for(adapter, token, sid)
     cm = runtime().conversation_manager
     if cm is not None:
@@ -86,5 +88,6 @@ async def delete_session(adapter, token: str, sid: str) -> None:
     scoped = scoped_key_for(adapter, token, sid)
     for q in list(getattr(adapter, "_sse_clients", {}).get(scoped, [])):
         adapter._put(q, None)
-    remaining = [x for x in sessions_list(adapter, token) if x["id"] != sid]
+    remaining = [x for x in sessions_list(adapter, token)
+                 if x["id"] != sid and x["id"] != DEFAULT_SESSION_ID]
     save_sessions(adapter, token, remaining)

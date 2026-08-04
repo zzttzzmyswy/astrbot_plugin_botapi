@@ -65,6 +65,17 @@ def test_resolve_sid():
         S.resolve_sid(a, "tok", "nope")
 
 
+@pytest.mark.asyncio
+async def test_delete_default_session_guard():
+    a = _adapter(sessions={"tok": [{"id": "abc", "name": "x", "created_at": 1}]})
+    with pytest.raises(LookupError):
+        await S.delete_session(a, "tok", S.DEFAULT_SESSION_ID)
+    # 未改动存储、未断 SSE
+    assert S.sessions_list(a, "tok")[0]["id"] == S.DEFAULT_SESSION_ID
+    assert a._sse_clients == {}
+    assert "abc" in [x["id"] for x in a.config["sessions"]["tok"]]
+
+
 def test_save_sessions_persists_config_cfg_global(monkeypatch):
     a = _adapter(monkeypatch)
     S.save_sessions(a, "tok", [{"id": "abc", "name": "工作", "created_at": 1}])
@@ -89,6 +100,10 @@ def test_sse_queues_for_aggregates_scoped():
 async def test_delete_session_removes_and_saves(monkeypatch):
     a = _adapter(monkeypatch, sessions={"tok": [{"id": "abc", "name": "x", "created_at": 1}]})
     calls = []
+    import asyncio
+    q = asyncio.Queue(maxsize=1)
+    a._sse_clients = {"tok:abc": [q]}
+    a._put = lambda qq, evt: qq.put_nowait(evt)
 
     class FakeCM:
         async def delete_conversations_by_user_id(self, umo):
@@ -98,6 +113,13 @@ async def test_delete_session_removes_and_saves(monkeypatch):
     rt = runtime()
     rt.conversation_manager = FakeCM()
     await S.delete_session(a, "tok", "abc")
+    # 会话被移除，默认会话仍派生在列
+    assert all(x["id"] != "abc" for x in S.sessions_list(a, "tok"))
+    # 持久化结果：存储里不含 abc
+    assert all(x["id"] != "abc" for x in a.config["sessions"]["tok"])
+    assert all(x["id"] != "abc" for x in a.cfg.sessions["tok"])
+    # 存储里也不含 default（只读派生，不写存储）
+    assert all(x["id"] != S.DEFAULT_SESSION_ID for x in a.config["sessions"]["tok"])
+    # SSE 队列收到关闭哨兵 None
+    assert await q.get() is None
     assert calls == ["botapi:FriendMessage:tok:abc"]
-    assert S.sessions_list(a, "tok") == [] or all(
-        x["id"] != "abc" for x in S.sessions_list(a, "tok"))
