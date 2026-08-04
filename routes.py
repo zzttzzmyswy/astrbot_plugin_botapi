@@ -14,14 +14,18 @@ from .models import SSEEvent
 from . import sessions as _sessions
 
 
-async def submit_inbound(adapter, token, text, file_ids=None) -> str:
+async def submit_inbound(adapter, token, text, file_ids=None, session_id="") -> str:
     """构造入站 AstrBotMessage + BotApiMessageEvent，persist + commit。
-    手机 /message 与管理页 /chat 共用，保证同一会话。返回 message_id。"""
+    手机 /message 与管理页 /chat 共用。session_id 缺省/空 → 默认会话。
+    返回 message_id。"""
+    sid = _sessions.resolve_sid(adapter, token, session_id)
+    scoped_umo = _sessions.umo_for(adapter, token, sid)
+    scoped_key = _sessions.scoped_key_for(adapter, token, sid)
     _get_or_create_origin(adapter, token)   # 建立 token→origin 映射
     msg = AstrBotMessage()
     msg.type = MessageType.FRIEND_MESSAGE
     msg.self_id = adapter.client_self_id
-    msg.session_id = token   # 只传 token
+    msg.session_id = scoped_umo   # 路由到正确会话的关键
     msg.message_id = f"botapi_{uuid.uuid4().hex[:12]}"
     msg.sender = MessageMember(user_id=token, nickname="User")
     msg.timestamp = int(time.time())
@@ -38,9 +42,10 @@ async def submit_inbound(adapter, token, text, file_ids=None) -> str:
     msg.raw_message = {"text": text, "file_ids": file_ids or []}
 
     event = BotApiMessageEvent(message_str=msg.message_str, message_obj=msg,
-                               platform_meta=adapter.meta(), session_id=token, adapter=adapter)
+                               platform_meta=adapter.meta(), session_id=scoped_umo,
+                               adapter=adapter)
     event.set_extra("enable_streaming", True)
-    await persist_inbound_text(token, msg.message_id, text)
+    await persist_inbound_text(scoped_key, msg.message_id, text)
     adapter.commit_event(event)
     return msg.message_id
 
@@ -77,7 +82,8 @@ def _setup_routes(adapter):
         data = await request.get_json()
         text = (data or {}).get("text", "")
         file_ids = (data or {}).get("file_ids", [])
-        message_id = await submit_inbound(adapter, token, text, file_ids)
+        session_id = (data or {}).get("session_id", "")
+        message_id = await submit_inbound(adapter, token, text, file_ids, session_id)
         return jsonify({"message_id": message_id})
 
     @app.post("/api/v1/botapi/upload")
@@ -139,11 +145,13 @@ def _setup_routes(adapter):
     async def stream():
         from quart import make_response
         token = _extract_token(adapter)
+        sid = _sessions.resolve_sid(adapter, token, request.args.get("session_id"))
+        scoped = _sessions.scoped_key_for(adapter, token, sid)
         q: asyncio.Queue = asyncio.Queue(maxsize=256)
-        adapter._sse_clients[token].append(q)
+        adapter._sse_clients[scoped].append(q)
         since = request.args.get("since")
 
-        resp = await make_response(_stream_gen(adapter, token, q, since), {
+        resp = await make_response(_stream_gen(adapter, scoped, q, since), {
             "Content-Type": "text/event-stream", "Cache-Control": "no-cache",
             "Connection": "keep-alive", "Transfer-Encoding": "chunked",
             "X-Accel-Buffering": "no",
@@ -155,10 +163,12 @@ def _setup_routes(adapter):
     async def get_history():
         from . import history as hist_mod
         token = _extract_token(adapter)
+        sid = _sessions.resolve_sid(adapter, token, request.args.get("session_id"))
+        scoped = _sessions.scoped_key_for(adapter, token, sid)
         since = request.args.get("since")
         before = request.args.get("before")
         limit = min(int(request.args.get("limit", 50)), 200)
-        msgs, has_more = await hist_mod.get_history(adapter.platform_id, token, since, before, limit)
+        msgs, has_more = await hist_mod.get_history(adapter.platform_id, scoped, since, before, limit)
         return jsonify({"messages": msgs, "has_more": has_more})
 
     @app.get("/api/v1/botapi/sessions")
@@ -211,7 +221,7 @@ def _setup_routes(adapter):
         return jsonify({"message": "会话已删除"})
 
 
-async def _stream_gen(adapter, token, q, since):
+async def _stream_gen(adapter, scoped, q, since):
     # 不经 SSE 回放历史：catchup 会把历史行（含较早消息）重发给 client，client
     # 用本地 now() 存 created_at、丢弃事件自带的 timestamp，导致较早的历史被
     # 盖上最新时间、排到真正最新记录下方。历史补漏改由 client 调 /history 端点
@@ -230,8 +240,8 @@ async def _stream_gen(adapter, token, q, since):
     except asyncio.CancelledError:
         pass
     finally:
-        if q in adapter._sse_clients.get(token, []):
-            adapter._sse_clients[token].remove(q)
+        if q in adapter._sse_clients.get(scoped, []):
+            adapter._sse_clients[scoped].remove(q)
 
 
 def _extract_token(adapter):

@@ -23,6 +23,9 @@ def _setup(monkeypatch, mid="m1", token="tok"):
         async def _push_media(self, chain, t, m):
             received.append(SSEEvent("message", {"_push_media": m}))
 
+        def scoped_key_for(self, token, sid):
+            return token if sid in ("", "default") else f"{token}:{sid}"
+
     class FakeSerializer:
         async def serialize_chain(self, message, event):
             return {"message_id": mid, "role": "assistant", "type": "text",

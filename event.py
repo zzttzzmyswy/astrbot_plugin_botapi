@@ -14,10 +14,16 @@ class BotApiMessageEvent(AstrMessageEvent):
         super().__init__(message_str, message_obj, platform_meta, session_id)
         self.adapter = adapter
         self.token = message_obj.sender.user_id
+        # session_id 形如 {pid}:FriendMessage:{token}[:{sid}]
+        parts = (session_id or "").split(":")
+        self.sid = parts[3] if len(parts) > 3 else "default"
         self._text_buf: list = []
 
     async def _broadcast(self, evt: SSEEvent):
-        await self.adapter._broadcast_to(self.token, evt)
+        scoped = self.adapter.scoped_key_for(self.token, self.sid)
+        evt.data = dict(evt.data or {})
+        evt.data["session_id"] = "" if self.sid == "default" else self.sid
+        await self.adapter._broadcast_to(scoped, evt)
 
     async def send(self, message: MessageChain) -> None:
         if message is None:

@@ -18,6 +18,8 @@ def _fake_adapter():
         client_self_id = "selfid"
         platform_id = "botapi"
         _uploaded_files = {}
+        config = {"id": "botapi", "tokens": ["t1"], "nicknames": {}, "sessions": {}}
+        cfg = SimpleNamespace(tokens=["t1"], nicknames={}, sessions={})
 
         def __init__(self):
             self.committed = []
@@ -49,7 +51,7 @@ async def test_submit_inbound_builds_and_commits(monkeypatch):
     assert seen["persist"] == ("t1", mid, "你好")
     assert adapter.committed, "event 应被 commit"
     evt = adapter.committed[0]
-    assert evt.session_id == "t1"
+    assert evt.session_id == "botapi:FriendMessage:t1"
     assert evt.message_obj.sender.user_id == "t1"
     assert evt.message_obj.message_str == "你好"
     assert evt.get_extra("enable_streaming") is True

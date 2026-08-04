@@ -38,6 +38,9 @@ async def test_full_streaming_chain_to_sse(monkeypatch):
         async def _push_media(self, chain, t, mid):
             pass
 
+        def scoped_key_for(self, token, sid):
+            return token if sid in ("", "default") else f"{token}:{sid}"
+
         class _S:
             _media_enabled = False
             async def serialize_chain(self, mc, event):
