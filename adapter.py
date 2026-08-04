@@ -41,6 +41,7 @@ class BotApiAdapter(Platform):
             port=int(platform_config.get("port", 9000)),
             tokens=list(platform_config.get("tokens", [])),
             nicknames=dict(platform_config.get("nicknames", {})),
+            sessions=dict(platform_config.get("sessions", {})),
         )
         self.platform_id = self.meta().id
         self._token_to_origin: dict = {}

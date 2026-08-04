@@ -8,6 +8,7 @@ class BotApiConfig:
     port: int = 9000
     tokens: list = field(default_factory=list)
     nicknames: dict = field(default_factory=dict)   # {token: 昵称}，仅管理展示用，不注入对话
+    sessions: dict = field(default_factory=dict)    # {token: [{id,name,created_at}, ...]}
 
 
 @dataclass
