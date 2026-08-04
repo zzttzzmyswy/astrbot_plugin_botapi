@@ -243,7 +243,7 @@ async function renderSessions() {
           <td><code>${esc(s.id)}</code></td>
           <td>
             <button class="btn btn-sm btn-primary" data-saction="enter" data-sid="${esc(s.id)}">进入对话</button>
-            <button class="btn btn-sm btn-secondary" data-saction="rename" data-sid="${esc(s.id)}">改名</button>
+            <button class="btn btn-sm btn-secondary" data-saction="rename" data-sid="${esc(s.id)}" data-name="${esc(s.name || s.id)}">改名</button>
             ${isDefault ? '' : `<button class="btn btn-sm btn-danger" data-saction="delete" data-sid="${esc(s.id)}">删除</button>`}
           </td>
         </tr>`;
@@ -315,7 +315,7 @@ function wireSessions() {
     const action = btn.dataset.saction;
     const sid = btn.dataset.sid;
     if (action === "enter") openChatSession(sessions.hash, sessions.nick, sid);
-    else if (action === "rename") await renameSession(sessions.hash, sid, "");
+    else if (action === "rename") await renameSession(sessions.hash, sid, btn.dataset.name || "");
     else if (action === "delete") await deleteSession(sessions.hash, sid);
   });
 }

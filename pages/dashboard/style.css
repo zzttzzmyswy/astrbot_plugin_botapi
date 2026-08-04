@@ -60,5 +60,6 @@ code { background:var(--bg); padding:2px 6px; border-radius:4px; font-size:12px;
 /* ── 会话列表视图 ── */
 #sessions-view { display:flex; flex-direction:column; gap:12px; }
 #sessions-view.hidden { display:none; }
+#main-view.hidden { display:none; }
 .session-meta { color:var(--text-secondary); font-size:12px; }
 .btn:disabled { opacity:0.5; cursor:not-allowed; }
