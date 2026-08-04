@@ -50,13 +50,17 @@ def _adapter(monkeypatch):
     finally:
         BotApiAdapter.__abstractmethods__ = _abs
     a.platform_id = "botapi"
-    a.config = {"id": "botapi", "tokens": ["tok"], "nicknames": {}, "sessions": {}}
-    a.cfg = SimpleNamespace(tokens=["tok"], nicknames={}, sessions={})
+    a.config = {"id": "botapi", "tokens": ["tok"], "sessions": {}}
+    a.cfg = SimpleNamespace(tokens=["tok"], sessions={})
     a._sse_clients = {}
     a._token_to_origin = {}
     a._active_platforms = {"aiocqhttp_main"}
-    a.config["botapi_bindings"] = {"tok": "aiocqhttp_main"}
     monkeypatch.setattr(S, "astrbot_config", {"platform": []})
+    import astrbot_plugin_botapi.adapter as adapter_mod
+    monkeypatch.setattr(adapter_mod, "astrbot_config", {"platform": [
+        {"id": "botapi", "type": "botapi", "enable": True},
+        {"id": "aiocqhttp_main", "tokens": ["tok"], "enable": True},
+    ]})
     return a
 
 
@@ -69,7 +73,7 @@ def _make_star(monkeypatch, tokens=None, bindings=None, sessions=None):
     adapter = SimpleNamespace(
         cfg=SimpleNamespace(tokens=list(tokens or []), nicknames={}, sessions=dict(all_s)),
         config={"id": "botapi", "tokens": list(tokens or []), "nicknames": {},
-                "sessions": dict(all_s), "botapi_bindings": binds},
+                "sessions": dict(all_s)},
         platform_id="botapi",
         _sse_clients={},
         _disabled_tokens=set(),
@@ -97,7 +101,6 @@ def _make_star(monkeypatch, tokens=None, bindings=None, sessions=None):
                 "tokens": list(tokens or []),
                 "nicknames": {},
                 "sessions": dict(all_s),
-                "botapi_bindings": dict(binds),
             }
         ]
     }

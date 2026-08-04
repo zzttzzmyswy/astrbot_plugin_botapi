@@ -54,9 +54,8 @@ def _make_real_adapter(monkeypatch):
     finally:
         BotApiAdapter.__abstractmethods__ = _abs
     a.platform_id = "botapi"
-    a.config = {"id": "botapi", "tokens": [], "nicknames": {}, "sessions": {},
-                "botapi_bindings": {}}
-    a.cfg = SimpleNamespace(tokens=[], nicknames={}, sessions={}, botapi_bindings={})
+    a.config = {"id": "botapi", "tokens": [], "sessions": {}}
+    a.cfg = SimpleNamespace(tokens=[], sessions={})
     a._sse_clients = {}
     a._token_to_origin = {}
     a._disabled_tokens = set()
@@ -82,9 +81,8 @@ def _make_star(monkeypatch, tokens=None, bindings=None, active=None,
     star = BotApiStar(ctx, None)
     binds = dict(bindings or {})
     adapter = SimpleNamespace(
-        cfg=SimpleNamespace(tokens=list(tokens or []), nicknames={}),
-        config={"id": "botapi", "tokens": list(tokens or []), "nicknames": {},
-                "botapi_bindings": binds},
+        cfg=SimpleNamespace(tokens=list(tokens or [])),
+        config={"id": "botapi", "tokens": list(tokens or [])},
         platform_id="botapi",
         _sse_clients={},
         _disabled_tokens=set(),
@@ -126,8 +124,12 @@ def _make_star(monkeypatch, tokens=None, bindings=None, active=None,
             fake_cfg["_saved"] = True
 
     import astrbot_plugin_botapi.main as main_mod
+    import astrbot_plugin_botapi.adapter as adapter_mod
 
-    monkeypatch.setattr(main_mod, "_cfg_singleton", FakeAstrbotConfig())
+    fake = FakeAstrbotConfig()
+    # 真实 BotApiAdapter 的 binding/bind 落盘都读模块级 astrbot_config → 与 _cfg_singleton 同一对象
+    monkeypatch.setattr(adapter_mod, "astrbot_config", fake)
+    monkeypatch.setattr(main_mod, "_cfg_singleton", fake)
     return star, adapter, fake_cfg, registered
 
 
@@ -216,7 +218,8 @@ async def test_platforms_route_registered(monkeypatch):
 async def test_stats_includes_bound_platform(monkeypatch):
     """_do_stats per_account 含 bound_platform（绑定 token 显示其平台 id）。"""
     star, adapter, _, _ = _make_star(
-        monkeypatch, tokens=["a", "b"], bindings={"a": "aiocqhttp_main"}
+        monkeypatch, tokens=["a", "b"], bindings={"a": "aiocqhttp_main"},
+        active={"aiocqhttp_main"},
     )
     res = await star._do_stats()
     per = {a["token_hash"]: a for a in res["data"]["per_account"]}
@@ -228,7 +231,8 @@ async def test_stats_includes_bound_platform(monkeypatch):
 async def test_accounts_includes_bound_platform(monkeypatch):
     """_accounts 每条含 bound_platform。"""
     star, adapter, _, _ = _make_star(
-        monkeypatch, tokens=["a", "b"], bindings={"a": "aiocqhttp_main"}
+        monkeypatch, tokens=["a", "b"], bindings={"a": "aiocqhttp_main"},
+        active={"aiocqhttp_main"},
     )
     res = await star._accounts()
     accs = {a["token_hash"]: a for a in res["data"]["accounts"]}
@@ -348,7 +352,13 @@ async def test_bind_refresh_makes_binding_platform_for_effective(monkeypatch):
     """集成：绑定 + 惰性刷新后，真实 binding_platform_for 返回目标平台（修复前恒 None）。"""
     from astrbot_plugin_botapi import runtime as rt_mod
 
-    star, _, _, _ = _make_star(monkeypatch, tokens=["a"])
+    star, _, fake_cfg, _ = _make_star(
+        monkeypatch, tokens=["a"],
+        config_platforms=[
+            {"id": "botapi", "type": "botapi", "enable": True},
+            {"id": "aiocqhttp_main", "tokens": [], "enable": True},
+        ],
+    )
     real = _make_real_adapter(monkeypatch)
     real.config["tokens"] = ["a"]
     real.cfg.tokens = ["a"]
@@ -359,9 +369,10 @@ async def test_bind_refresh_makes_binding_platform_for_effective(monkeypatch):
     )
     # 修复前：活跃集为空 → 绑定静默失效
     assert real.binding_platform_for("a") is None
-    # _do_bind 内惰性刷新 → 活跃集注入 → 绑定生效
+    # _do_bind 内惰性刷新 → 活跃集注入 → 绑定生效（token 已进 aiocqhttp_main 条目 tokens）
     res = await star._do_bind(_hash("a"), "aiocqhttp_main")
     assert res["status"] == "ok"
+    assert fake_cfg["platform"][1]["tokens"] == ["a"]
     assert real.binding_platform_for("a") == "aiocqhttp_main"
 
 
@@ -370,7 +381,13 @@ async def test_bind_to_inactive_platform_stays_inactive(monkeypatch):
     """绑定到未启动平台（不在活跃集）→ 即便已绑定，binding_platform_for 仍返回 None。"""
     from astrbot_plugin_botapi import runtime as rt_mod
 
-    star, _, _, _ = _make_star(monkeypatch, tokens=["a"])
+    star, _, fake_cfg, _ = _make_star(
+        monkeypatch, tokens=["a"],
+        config_platforms=[
+            {"id": "botapi", "type": "botapi", "enable": True},
+            {"id": "aiocqhttp_main", "tokens": [], "enable": False},
+        ],
+    )
     real = _make_real_adapter(monkeypatch)
     real.config["tokens"] = ["a"]
     real.cfg.tokens = ["a"]
@@ -378,7 +395,8 @@ async def test_bind_to_inactive_platform_stays_inactive(monkeypatch):
     star.context.platform_manager = _fake_pm(_config_only_inst("botapi"))
     res = await star._do_bind(_hash("a"), "aiocqhttp_main")   # aiocqhttp_main 未在跑
     assert res["status"] == "ok"
-    assert real.config["botapi_bindings"]["a"] == "aiocqhttp_main"   # 绑定已持久化
+    # 绑定已持久化到平台 tokens
+    assert fake_cfg["platform"][1]["tokens"] == ["a"]
     assert real.binding_platform_for("a") is None                     # 但未生效（回退默认路由）
 
 
@@ -388,10 +406,15 @@ async def test_stats_refreshes_active_platforms_for_binding(monkeypatch):
     import json
     from astrbot_plugin_botapi import runtime as rt_mod
 
-    star, _, _, _ = _make_star(monkeypatch, tokens=["a"])
+    star, _, fake_cfg, _ = _make_star(
+        monkeypatch, tokens=["a"],
+        config_platforms=[
+            {"id": "botapi", "type": "botapi", "enable": True},
+            {"id": "aiocqhttp_main", "tokens": ["a"], "enable": True},
+        ],
+    )
     real = _make_real_adapter(monkeypatch)
     real.config["tokens"] = ["a"]
-    real.config["botapi_bindings"] = {"a": "aiocqhttp_main"}
     real.cfg.tokens = ["a"]
     rt_mod.runtime().adapter = real
 

@@ -57,10 +57,6 @@ class BotApiAdapter(Platform):
         self.platform_id = self.meta().id
         self._token_to_origin: dict = {}
         self._sse_clients: dict = defaultdict(list)
-        # token→platform 绑定表：存 adapter.config（经 astrbot_config 平台子树持久化，
-        # 不经过插件配置 schema，避免 check_config_integrity 剔除任意键）。
-        # 空键确保 config 里始终存在 botapi_bindings；绑定内容 Task 5 前从旧配置迁移。
-        self.config.setdefault("botapi_bindings", {})
         # 活跃平台 id 集合（PlatformManager._inst_map），Task 5 注入真实值；
         # 绑定查询时若目标平台不在活跃集合则回退（未绑定处理）。
         self._active_platforms: set = set()
@@ -222,41 +218,77 @@ class BotApiAdapter(Platform):
                 self._put(q, SSEEvent("message", data))
 
     # ── token→platform 绑定（多机器人）──
+    # 绑定 = token 出现在非 botapi 平台条目的 tokens 列表（一对一）。数据源是模块级
+    # astrbot_config（与 _legacy_port 同一引用），不存 adapter.config，避免被
+    # check_config_integrity 剔除任意键；平台条目是列表项，不被 schema 检查。
+
+    def _save_platforms(self):
+        try:
+            save = getattr(astrbot_config, "save_config", None)
+            if save:
+                save()
+        except Exception:
+            pass
 
     def binding_platform_for(self, token: str) -> str | None:
         """返回 token 绑定的 platform_id；未绑定或平台不活跃返回 None。
 
-        活跃集合为空（重启后平台注入前，消息热路径 submit_inbound 会在此读到空集）
-        时回退 astrbot_config 里 enable=True 的非 botapi 平台条目，避免绑定静默失效。
+        扫描 astrbot_config["platform"] 非 botapi 条目 tokens。命中后校验活跃：
+        _active_platforms 非空 → 须在集合内；为空（重启后平台注入前）→ 回退该条目
+        enable=True。
         """
-        bindings = self.config.get("botapi_bindings") or {}
-        pid = bindings.get(token)
+        pid = None
+        try:
+            for p in astrbot_config.get("platform", []):
+                if p.get("id") == self.config.get("id") or p.get("type") == "botapi":
+                    continue
+                if token in (p.get("tokens") or []):
+                    pid = p.get("id")
+                    break
+        except Exception:
+            pass
         if not pid:
             return None
         active = getattr(self, "_active_platforms", None)
         if active is not None and active:
-            if pid not in active:
-                return None
-            return pid
-        # _active_platforms 为空（重启后平台注入前）：回退 astrbot_config enable=True 条目
-        # 读模块级 astrbot_config（与 _legacy_port 同一引用），便于测试 monkeypatch。
+            return pid if pid in active else None
         try:
-            self_id = self.config.get("id")
             for p in astrbot_config.get("platform", []):
-                if p.get("id") == self_id or p.get("type") == "botapi":
-                    continue
-                if p.get("enable") and p.get("id") == pid:
-                    return pid
+                if p.get("id") == pid:
+                    return pid if p.get("enable") else None
         except Exception:
             pass
         return None
 
-    def bind_token(self, token: str, platform_id: str) -> None:
-        bindings = dict(self.config.get("botapi_bindings") or {})
-        bindings[token] = platform_id
-        self.config["botapi_bindings"] = bindings
-
     def unbind_token(self, token: str) -> None:
-        bindings = dict(self.config.get("botapi_bindings") or {})
-        bindings.pop(token, None)
-        self.config["botapi_bindings"] = bindings
+        """把 token 从所有非 botapi 平台 tokens 移除；有变更才落盘。"""
+        changed = False
+        try:
+            for p in astrbot_config.get("platform", []):
+                if p.get("id") == self.config.get("id") or p.get("type") == "botapi":
+                    continue
+                toks = p.get("tokens") or []
+                if token in toks:
+                    p["tokens"] = [t for t in toks if t != token]
+                    changed = True
+        except Exception:
+            pass
+        if changed:
+            self._save_platforms()
+
+    def bind_token(self, token: str, platform_id: str) -> None:
+        """绑定 token → 目标平台：先从所有平台移除（一对一），再追加到目标 tokens。"""
+        self.unbind_token(token)
+        try:
+            for p in astrbot_config.get("platform", []):
+                if p.get("id") != platform_id:
+                    continue
+                if p.get("type") == "botapi":
+                    break
+                toks = [t for t in (p.get("tokens") or []) if t != token]
+                toks.append(token)
+                p["tokens"] = toks
+                self._save_platforms()
+                break
+        except Exception:
+            pass

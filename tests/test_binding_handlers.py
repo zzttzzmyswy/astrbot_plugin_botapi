@@ -34,43 +34,35 @@ def _fake_context():
     return FakeContext(), registered
 
 
-def _make_star(monkeypatch, tokens=None, bindings=None, platforms=None):
+def _make_star(monkeypatch, tokens=None, platforms=None):
+    """真实 BotApiAdapter（免 __init__）+ adapter 与 main 共享同一 FakeAstrbotConfig。"""
+    from astrbot_plugin_botapi.adapter import BotApiAdapter
+    from astrbot_plugin_botapi import adapter as adapter_mod
+    from astrbot_plugin_botapi import runtime as rt_mod
+    import astrbot_plugin_botapi.main as main_mod
+
+    _abs = BotApiAdapter.__abstractmethods__
+    BotApiAdapter.__abstractmethods__ = frozenset()
+    try:
+        a = object.__new__(BotApiAdapter)
+    finally:
+        BotApiAdapter.__abstractmethods__ = _abs
+    a.platform_id = "botapi"
+    a.config = {"id": "botapi", "type": "botapi", "tokens": list(tokens or [])}
+    a.cfg = SimpleNamespace(tokens=list(tokens or []), sessions={})
+    a._sse_clients = {}
+    a._disabled_tokens = set()
+    a._last_active = {}
+    a._active_platforms = {"aiocqhttp_main"}
+
     ctx, registered = _fake_context()
     star = BotApiStar(ctx, None)
-    binds = dict(bindings or {})
-    adapter = SimpleNamespace(
-        cfg=SimpleNamespace(tokens=list(tokens or [])),
-        config={
-            "id": "botapi",
-            "tokens": list(tokens or []),
-            "nicknames": {},
-            "botapi_bindings": binds,
-        },
-        platform_id="botapi",
-        _sse_clients={},
-        _disabled_tokens=set(),
-        _last_active={},
-        _put=lambda q, evt: None,
-        # 真实 adapter 的方法（供 _do_bind/_do_unbind 调用）
-        bind_token=lambda t, pid: adapter.config["botapi_bindings"].update({t: pid}),
-        unbind_token=lambda t: adapter.config["botapi_bindings"].pop(t, None),
-    )
-    from astrbot_plugin_botapi import runtime as rt_mod
+    rt_mod.runtime().adapter = a
 
-    rt = rt_mod.runtime()
-    rt.adapter = adapter
-    fake_cfg = {
-        "platform": list(
-            platforms
-            or [
-                {
-                    "id": "botapi",
-                    "tokens": list(tokens or []),
-                    "botapi_bindings": dict(binds),
-                }
-            ]
-        )
-    }
+    fake_cfg = {"platform": list(platforms if platforms is not None else [
+        {"id": "botapi", "type": "botapi", "tokens": list(tokens or []), "enable": True},
+        {"id": "aiocqhttp_main", "type": "aiocqhttp", "tokens": [], "enable": True},
+    ])}
 
     class FakeAstrbotConfig:
         def __getitem__(self, k):
@@ -82,10 +74,10 @@ def _make_star(monkeypatch, tokens=None, bindings=None, platforms=None):
         def save_config(self):
             fake_cfg["_saved"] = True
 
-    import astrbot_plugin_botapi.main as main_mod
-
-    monkeypatch.setattr(main_mod, "_cfg_singleton", FakeAstrbotConfig())
-    return star, adapter, fake_cfg, registered
+    fake = FakeAstrbotConfig()
+    monkeypatch.setattr(adapter_mod, "astrbot_config", fake)
+    monkeypatch.setattr(main_mod, "_cfg_singleton", fake)
+    return star, a, fake_cfg, registered
 
 
 def _hash(t):
@@ -97,8 +89,7 @@ async def test_bind_persists_to_platform_subtree(monkeypatch):
     star, adapter, fake_cfg, _ = _make_star(monkeypatch, tokens=["a"])
     res = await star._do_bind(_hash("a"), "aiocqhttp_main")
     assert res["status"] == "ok"
-    assert adapter.config["botapi_bindings"]["a"] == "aiocqhttp_main"
-    assert fake_cfg["platform"][0]["botapi_bindings"]["a"] == "aiocqhttp_main"
+    assert fake_cfg["platform"][1]["tokens"] == ["a"]
     assert fake_cfg.get("_saved") is True
 
 
@@ -108,7 +99,7 @@ async def test_bind_empty_platform_id_rejected(monkeypatch):
     res = await star._do_bind(_hash("a"), "")
     assert res["status"] == "error"
     assert "platform_id" in res["message"]
-    assert "a" not in adapter.config["botapi_bindings"]
+    assert fake_cfg["platform"][1]["tokens"] == []
 
 
 @pytest.mark.asyncio
@@ -121,13 +112,13 @@ async def test_bind_unknown_account_rejected(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_unbind_removes_binding(monkeypatch):
-    star, adapter, fake_cfg, _ = _make_star(
-        monkeypatch, tokens=["a"], bindings={"a": "aiocqhttp_main"}
-    )
+    star, adapter, fake_cfg, _ = _make_star(monkeypatch, tokens=["a"], platforms=[
+        {"id": "botapi", "type": "botapi", "tokens": ["a"], "enable": True},
+        {"id": "aiocqhttp_main", "tokens": ["a"], "enable": True},
+    ])
     res = await star._do_unbind(_hash("a"))
     assert res["status"] == "ok"
-    assert "a" not in adapter.config["botapi_bindings"]
-    assert fake_cfg["platform"][0]["botapi_bindings"] == {}
+    assert fake_cfg["platform"][1]["tokens"] == []
     assert fake_cfg.get("_saved") is True
 
 
@@ -151,23 +142,3 @@ async def test_bind_adapter_not_ready(monkeypatch):
     res = await star._do_bind(_hash("a"), "aiocqhttp_main")
     assert res["status"] == "error"
     assert "适配器未就绪" in res["message"]
-
-
-@pytest.mark.asyncio
-async def test_bind_with_stubbed_persist_fails(monkeypatch):
-    """Verify that persistence write is tested: stub _persist_bindings and confirm test fails."""
-    star, adapter, fake_cfg, _ = _make_star(monkeypatch, tokens=["a"])
-
-    # Stub _persist_bindings to no-op BEFORE calling _do_bind
-    star._persist_bindings = lambda adapter: None
-
-    res = await star._do_bind(_hash("a"), "aiocqhttp_main")
-    assert res["status"] == "ok"
-    assert adapter.config["botapi_bindings"]["a"] == "aiocqhttp_main"
-
-    # Now the platform subtree should NOT have been updated (since we stubbed persist)
-    # This proves the original test was passing because of the separate copy (dict(binds))
-    with pytest.raises(KeyError):
-        _ = fake_cfg["platform"][0]["botapi_bindings"]["a"]
-
-

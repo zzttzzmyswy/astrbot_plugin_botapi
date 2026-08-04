@@ -6,7 +6,7 @@ from astrbot_plugin_botapi.models import BotApiConfig
 from astrbot_plugin_botapi import sessions as S
 
 
-def _adapter(monkeypatch=None, sessions=None, bindings=None, active=None):
+def _adapter(monkeypatch=None, sessions=None, active=None, platforms=None):
     from astrbot_plugin_botapi.adapter import BotApiAdapter
     _abs = BotApiAdapter.__abstractmethods__
     BotApiAdapter.__abstractmethods__ = frozenset()
@@ -15,16 +15,19 @@ def _adapter(monkeypatch=None, sessions=None, bindings=None, active=None):
     finally:
         BotApiAdapter.__abstractmethods__ = _abs
     a.platform_id = "botapi"
-    a.config = {"id": "botapi", "tokens": ["tok"], "nicknames": {}, "sessions": sessions or {}}
-    if bindings is not None:
-        a.config["botapi_bindings"] = bindings
-    a.cfg = SimpleNamespace(tokens=["tok"], nicknames={}, sessions=sessions or {})
+    a.config = {"id": "botapi", "tokens": ["tok"], "sessions": sessions or {}}
+    a.cfg = SimpleNamespace(tokens=["tok"], sessions=sessions or {})
     a._sse_clients = {}
     a._token_to_origin = {}
     a._active_platforms = set(active or ())
     if monkeypatch is not None:
         fake_cfg = {"platform": [{"id": "botapi", "sessions": sessions or {}}]}
         monkeypatch.setattr(S, "astrbot_config", fake_cfg)
+        import astrbot_plugin_botapi.adapter as adapter_mod
+        # 绑定数据源：非 botapi 平台条目的 tokens 列表（与 _legacy_port 同一引用）
+        monkeypatch.setattr(adapter_mod, "astrbot_config", {
+            "platform": list(platforms if platforms is not None else []),
+        })
     return a
 
 
@@ -135,7 +138,8 @@ async def test_delete_session_bound_deletes_bound_umo(monkeypatch):
     否则 delete_conversations_by_user_id 精确匹配不到 → 静默 no-op、会话泄漏。"""
     a = _adapter(monkeypatch,
                  sessions={"tok": [{"id": "abc", "name": "x", "created_at": 1}]},
-                 bindings={"tok": "aiocqhttp_main"}, active={"aiocqhttp_main"})
+                 active={"aiocqhttp_main"},
+                 platforms=[{"id": "aiocqhttp_main", "tokens": ["tok"], "enable": True}])
     calls = []
     import asyncio
     q = asyncio.Queue(maxsize=1)
@@ -162,7 +166,8 @@ async def test_delete_session_bound_inactive_uses_botapi_umo(monkeypatch):
     """绑定目标平台不在活跃集合（绑定静默回退）→ 会话实际在 botapi 自身 UMO → 删该 UMO。"""
     a = _adapter(monkeypatch,
                  sessions={"tok": [{"id": "abc", "name": "x", "created_at": 1}]},
-                 bindings={"tok": "dead_platform"})   # active 空集 → 绑定不生效
+                 active=set(),
+                 platforms=[{"id": "aiocqhttp_main", "tokens": ["tok"], "enable": False}])  # 不在活跃集且 enable=False → 绑定不生效
     calls = []
     import asyncio
     q = asyncio.Queue(maxsize=1)

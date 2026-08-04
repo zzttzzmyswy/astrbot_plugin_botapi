@@ -52,7 +52,7 @@ class BotApiStar(Star):
         rt.context = context
         rt.conversation_manager = context.conversation_manager
         rt.message_history_manager = context.message_history_manager
-        # 插件配置（插件配置页可编辑 host/port/botapi_bindings），AstrBotConfig 是 dict 子类
+        # 插件配置（插件配置页可编辑 host/port），AstrBotConfig 是 dict 子类
         self._plugin_conf = config if isinstance(config, dict) else {}
         P = "astrbot_plugin_botapi"
         context.register_web_api(f"/{P}/stats", self._stats, ["GET"], "统计")
@@ -170,14 +170,6 @@ class BotApiStar(Star):
         adapter.cfg.tokens = list(new_tokens)
         _cfg_singleton.save_config()
 
-    def _persist_bindings(self, adapter):
-        """把 adapter.config 的绑定表同步到 astrbot_config 平台子树并落盘（与 tokens/sessions 同模式）。"""
-        for p in _cfg_singleton.get("platform", []):
-            if p.get("id") == adapter.config.get("id"):
-                p["botapi_bindings"] = adapter.config.get("botapi_bindings") or {}
-                break
-        _cfg_singleton.save_config()
-
     # ── _do_* helpers（纯逻辑，可直接测试）──
 
     async def _do_stats(self):
@@ -189,7 +181,6 @@ class BotApiStar(Star):
         from . import sessions as _sessions
 
         per = []
-        bindings = adapter.config.get("botapi_bindings") or {}
         for token in adapter.cfg.tokens or []:
             platform_id, tok = _sessions.bound_conversation_umo(adapter, token,
                                                                 _sessions.DEFAULT_SESSION_ID)
@@ -207,7 +198,7 @@ class BotApiStar(Star):
             per.append({
                 "token_preview": self._preview(token),
                 "token_hash": self._hash_tok(token),
-                "bound_platform": bindings.get(token),   # 有效绑定（含未生效回退）都展示，便于 UI 提示
+                "bound_platform": adapter.binding_platform_for(token),   # 有效绑定（含未生效回退）都展示，便于 UI 提示
                 "online": bool(sse),
                 "sse_connections": len(sse),
                 "message_count": msg_count,
@@ -272,6 +263,7 @@ class BotApiStar(Star):
             return Response().error("未找到账户").__dict__
         toks = [t for t in adapter.config.get("tokens", []) if t != target]
         self._persist_tokens(adapter, toks)
+        adapter.unbind_token(target)
         from . import sessions as _sessions
 
         for q in _sessions.sse_queues_for(adapter, target):
@@ -300,8 +292,6 @@ class BotApiStar(Star):
         if not platform_id:
             return Response().error("platform_id 不能为空").__dict__
         adapter.bind_token(target, platform_id)
-        # 持久化绑定表到平台子树
-        self._persist_bindings(adapter)
         return Response().ok({"message": "绑定成功"}).__dict__
 
     async def _do_unbind(self, token_hash):
@@ -317,7 +307,6 @@ class BotApiStar(Star):
         if not target:
             return Response().error("未找到账户").__dict__
         adapter.unbind_token(target)
-        self._persist_bindings(adapter)
         return Response().ok({"message": "已解绑"}).__dict__
 
     async def _do_toggle(self, token_hash, disabled):
@@ -586,13 +575,12 @@ class BotApiStar(Star):
             return Response().error("适配器未就绪").__dict__
         from . import sessions as _sessions
 
-        bindings = adapter.config.get("botapi_bindings") or {}
         accs = [
             {
                 "token_preview": self._preview(t),
                 "token_hash": self._hash_tok(t),
                 "enabled": t not in adapter._disabled_tokens,
-                "bound_platform": bindings.get(t),
+                "bound_platform": adapter.binding_platform_for(t),
                 "online": bool(_sessions.sse_queues_for(adapter, t)),
                 "sse_connections": len(_sessions.sse_queues_for(adapter, t)),
                 "last_active": adapter._last_active.get(t),

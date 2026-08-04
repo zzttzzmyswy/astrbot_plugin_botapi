@@ -43,6 +43,8 @@ def _make_star(monkeypatch, tokens=None, sessions=None):
         _last_active={},
         _token_to_origin={},
         _put=lambda q, evt: None,
+        unbind_token=lambda t: None,   # _do_delete 调用（真实 adapter 自带落盘）
+        binding_platform_for=lambda t: None,   # _do_stats bound_platform（本文件不断言绑定）
     )
     from astrbot_plugin_botapi import runtime as rt_mod
 
