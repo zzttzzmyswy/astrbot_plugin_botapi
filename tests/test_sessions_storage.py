@@ -6,7 +6,7 @@ from astrbot_plugin_botapi.models import BotApiConfig
 from astrbot_plugin_botapi import sessions as S
 
 
-def _adapter(monkeypatch=None, sessions=None):
+def _adapter(monkeypatch=None, sessions=None, bindings=None, active=None):
     from astrbot_plugin_botapi.adapter import BotApiAdapter
     _abs = BotApiAdapter.__abstractmethods__
     BotApiAdapter.__abstractmethods__ = frozenset()
@@ -16,9 +16,12 @@ def _adapter(monkeypatch=None, sessions=None):
         BotApiAdapter.__abstractmethods__ = _abs
     a.platform_id = "botapi"
     a.config = {"id": "botapi", "tokens": ["tok"], "nicknames": {}, "sessions": sessions or {}}
+    if bindings is not None:
+        a.config["botapi_bindings"] = bindings
     a.cfg = SimpleNamespace(tokens=["tok"], nicknames={}, sessions=sessions or {})
     a._sse_clients = {}
     a._token_to_origin = {}
+    a._active_platforms = set(active or ())
     if monkeypatch is not None:
         fake_cfg = {"platform": [{"id": "botapi", "sessions": sessions or {}}]}
         monkeypatch.setattr(S, "astrbot_config", fake_cfg)
@@ -122,4 +125,56 @@ async def test_delete_session_removes_and_saves(monkeypatch):
     assert all(x["id"] != S.DEFAULT_SESSION_ID for x in a.config["sessions"]["tok"])
     # SSE 队列收到关闭哨兵 None
     assert await q.get() is None
+    # 未绑定 → 删裸 botapi UMO
+    assert calls == ["botapi:FriendMessage:tok:abc"]
+
+
+@pytest.mark.asyncio
+async def test_delete_session_bound_deletes_bound_umo(monkeypatch):
+    """绑定 token 的会话删除必须用绑定平台 UMO（{bound}:FriendMessage:botapi_tok:abc），
+    否则 delete_conversations_by_user_id 精确匹配不到 → 静默 no-op、会话泄漏。"""
+    a = _adapter(monkeypatch,
+                 sessions={"tok": [{"id": "abc", "name": "x", "created_at": 1}]},
+                 bindings={"tok": "aiocqhttp_main"}, active={"aiocqhttp_main"})
+    calls = []
+    import asyncio
+    q = asyncio.Queue(maxsize=1)
+    a._sse_clients = {"tok:abc": [q]}
+    a._put = lambda qq, evt: qq.put_nowait(evt)
+
+    class FakeCM:
+        async def delete_conversations_by_user_id(self, umo):
+            calls.append(umo)
+
+    from astrbot_plugin_botapi.runtime import runtime
+    rt = runtime()
+    rt.conversation_manager = FakeCM()
+    await S.delete_session(a, "tok", "abc")
+    # 会话仍被移除（存储/SSE 逻辑不受影响）
+    assert all(x["id"] != "abc" for x in S.sessions_list(a, "tok"))
+    assert await q.get() is None
+    # 删除的 conversation 是绑定平台 UMO（带 botapi_ 前缀），而非裸 botapi UMO
+    assert calls == ["aiocqhttp_main:FriendMessage:botapi_tok:abc"]
+
+
+@pytest.mark.asyncio
+async def test_delete_session_bound_inactive_uses_botapi_umo(monkeypatch):
+    """绑定目标平台不在活跃集合（绑定静默回退）→ 会话实际在 botapi 自身 UMO → 删该 UMO。"""
+    a = _adapter(monkeypatch,
+                 sessions={"tok": [{"id": "abc", "name": "x", "created_at": 1}]},
+                 bindings={"tok": "dead_platform"})   # active 空集 → 绑定不生效
+    calls = []
+    import asyncio
+    q = asyncio.Queue(maxsize=1)
+    a._sse_clients = {"tok:abc": [q]}
+    a._put = lambda qq, evt: qq.put_nowait(evt)
+
+    class FakeCM:
+        async def delete_conversations_by_user_id(self, umo):
+            calls.append(umo)
+
+    from astrbot_plugin_botapi.runtime import runtime
+    rt = runtime()
+    rt.conversation_manager = FakeCM()
+    await S.delete_session(a, "tok", "abc")
     assert calls == ["botapi:FriendMessage:tok:abc"]

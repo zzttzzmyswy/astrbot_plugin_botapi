@@ -26,6 +26,7 @@ from . import sessions as _sessions
 # 永不完成的协程（等待 _shutdown），避免重复绑定端口冲突。
 _server_lock = threading.Lock()
 _SERVER_STARTED = False
+_server_owner = None   # 当前拥有服务器（绑定端口）的 adapter 实例；仅其 terminate 可复位锁
 
 
 @register_platform_adapter(
@@ -134,18 +135,31 @@ class BotApiAdapter(Platform):
         # 多 botapi platform 条目都会调 run()，但模块级单实例锁保证只有第一个
         # 真正绑定端口；后续条目返回永不完成的协程（_shutdown.wait()），
         # 由 PlatformManager 驻留，待 terminate() 一并结束。
-        global _SERVER_STARTED
+        global _SERVER_STARTED, _server_owner
         with _server_lock:
             if _SERVER_STARTED:
-                return self._shutdown.wait()   # 已起过：不重复绑定端口
+                # 已起过：不重复绑定端口。
+                # 若起锁者就是本实例（重启后旧协程尚在驻留），同样只等待自己的
+                # _shutdown（不退出事件循环），避免在 _server_owner 仍是自己时
+                # 误以为"锁被他人持有"而提前结束驻留协程。
+                return self._shutdown.wait()
             _SERVER_STARTED = True
+            _server_owner = self
+        # 注意：_SERVER_STARTED 在 app.run_task 真正绑定端口成功前就已置 True；
+        # 若初始绑定失败（如端口被占）锁会泄漏为 True，之后任何 botapi 都无法再
+        # 起服务器。此为已接受的边界（绑定失败属配置错误，由平台 ERROR 状态暴露），
+        # 不做复杂守卫。
         return self.app.run_task(host=self._host, port=self._port,
                                  shutdown_trigger=self._shutdown.wait)
 
     async def terminate(self) -> None:
-        global _SERVER_STARTED
+        global _SERVER_STARTED, _server_owner
         with _server_lock:
-            _SERVER_STARTED = False   # 复位锁，允许重启（重新绑定端口）
+            # 仅服务器拥有者复位锁；非拥有者（等待 _shutdown 的驻留条目）复位会
+            # 导致拥有者重启后锁已放行，新实例再绑定同一端口 → address already in use。
+            if _server_owner is self:
+                _SERVER_STARTED = False
+                _server_owner = None
         self._shutdown.set()
         for token, queues in list(self._sse_clients.items()):
             for q in queues:
@@ -213,15 +227,32 @@ class BotApiAdapter(Platform):
     # ── token→platform 绑定（多机器人）──
 
     def binding_platform_for(self, token: str) -> str | None:
-        """返回 token 绑定的 platform_id；未绑定或平台不活跃返回 None。"""
+        """返回 token 绑定的 platform_id；未绑定或平台不活跃返回 None。
+
+        活跃集合为空（重启后平台注入前，消息热路径 submit_inbound 会在此读到空集）
+        时回退 astrbot_config 里 enable=True 的非 botapi 平台条目，避免绑定静默失效。
+        """
         bindings = self.config.get("botapi_bindings") or {}
         pid = bindings.get(token)
         if not pid:
             return None
         active = getattr(self, "_active_platforms", None)
-        if active is not None and pid not in active:
-            return None
-        return pid
+        if active is not None and active:
+            if pid not in active:
+                return None
+            return pid
+        # _active_platforms 为空（重启后平台注入前）：回退 astrbot_config enable=True 条目
+        # 读模块级 astrbot_config（与 _legacy_port 同一引用），便于测试 monkeypatch。
+        try:
+            self_id = self.config.get("id")
+            for p in astrbot_config.get("platform", []):
+                if p.get("id") == self_id or p.get("type") == "botapi":
+                    continue
+                if p.get("enable") and p.get("id") == pid:
+                    return pid
+        except Exception:
+            pass
+        return None
 
     def bind_token(self, token: str, platform_id: str) -> None:
         bindings = dict(self.config.get("botapi_bindings") or {})

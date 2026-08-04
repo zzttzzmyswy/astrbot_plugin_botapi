@@ -94,7 +94,10 @@ async def delete_session(adapter, token: str, sid: str) -> None:
     """删除会话：删 conversation（含会话 umo）+ 断 SSE + 从存储移除。"""
     if sid == DEFAULT_SESSION_ID:
         raise LookupError(f"cannot delete default session: {sid}")
-    scoped_umo = umo_for(adapter, token, sid)
+    # 绑定 token 的 conversation 落在 {bound}:FriendMessage:botapi_{scoped_key}
+    # （submit_inbound 的 UMO 覆写），直接按裸 umo_for 删是静默 no-op、泄漏会话。
+    platform_id, tok = bound_conversation_umo(adapter, token, sid)
+    scoped_umo = f"{platform_id}:FriendMessage:{tok}"
     cm = runtime().conversation_manager
     if cm is not None:
         try:

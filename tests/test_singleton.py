@@ -216,6 +216,12 @@ async def test_init_non_numeric_legacy_port_does_not_crash(tmp_path, monkeypatch
 
 # ── Task 5：活跃平台注入 + 单实例 Quart 模块级锁 ──
 
+@pytest.fixture()
+def _reset_server_owner(monkeypatch):
+    import astrbot_plugin_botapi.adapter as adapter_mod
+    monkeypatch.setattr(adapter_mod, "_server_owner", None)
+
+
 def _active_adapter(monkeypatch):
     """构造仅含活跃平台注入所需属性的 adapter（避免 4.26 环境 _legacy_port 等路径噪音）。"""
     import astrbot_plugin_botapi.adapter as adapter_mod
@@ -323,12 +329,117 @@ def test_run_lock_after_terminate_allows_rebind(tmp_path, monkeypatch):
     assert calls == [("0.0.0.0", 9000)]
     coro.close()
 
-    # 模拟关闭：terminate 复位全局锁
+    # 模拟关闭：owner（a）terminate 复位全局锁 + 清 owner
     async def _terminate():
         await a.terminate()
     asyncio.run(_terminate())
 
     # 重启（新实例）：锁已复位 → 再次真实绑定
+    a2, _ = _adapter(monkeypatch, _base_plugin_conf(str(tmp_path)))
+    a2.app.run_task = fake_run_task
+    coro2 = a2.run()
+    assert calls == [("0.0.0.0", 9000), ("0.0.0.0", 9000)]
+    coro2.close()
+
+
+def test_run_owner_same_instance_rebind_allowed(tmp_path, monkeypatch):
+    """_SERVER_STARTED=True 但拥有者仍是同一实例（重启旧协程驻留）→ 该实例 run()
+    仍返回等待协程，不误判为他人持有锁而提前退出。"""
+    from astrbot_plugin_botapi.adapter import BotApiAdapter
+
+    a, _ = _adapter(monkeypatch, _base_plugin_conf(str(tmp_path)))
+    calls = []
+
+    def fake_run_task(*, host, port, shutdown_trigger=None):
+        calls.append((host, port))
+
+        async def _never():
+            await asyncio.Event().wait()
+
+        return _never()
+
+    a.app.run_task = fake_run_task
+    coro1 = a.run()
+    assert calls == [("0.0.0.0", 9000)]
+    coro1.close()
+    # 同实例再次 run()：_SERVER_STARTED=True 且 _server_owner is self → 走 _shutdown.wait()，不重复绑定
+    coro2 = a.run()
+    assert calls == [("0.0.0.0", 9000)]   # app.run_task 未被再次调用
+    coro2.close()
+
+
+def test_terminate_non_owner_does_not_reset_server_started(tmp_path, monkeypatch,
+                                                           _reset_server_owner):
+    """非 owner 的 adapter 调 terminate() 不得复位 _SERVER_STARTED / _server_owner：
+    owner 的服务器仍在驻留占端口，若锁被放行，owner 重启的新实例会重复绑定 →
+    address already in use。"""
+    from astrbot_plugin_botapi.adapter import BotApiAdapter
+    import astrbot_plugin_botapi.adapter as adapter_mod
+
+    a_owner, _ = _adapter(monkeypatch, _base_plugin_conf(str(tmp_path)))
+    a_follower, _ = _adapter(monkeypatch, _base_plugin_conf(str(tmp_path)))
+    calls = []
+
+    def fake_run_task(*, host, port, shutdown_trigger=None):
+        calls.append((host, port))
+
+        async def _never():
+            await asyncio.Event().wait()
+
+        return _never()
+
+    a_owner.app.run_task = fake_run_task
+    a_follower.app.run_task = fake_run_task
+    coro1 = a_owner.run()
+    coro2 = a_follower.run()
+    assert calls == [("0.0.0.0", 9000)]
+    assert adapter_mod._server_owner is a_owner
+    coro1.close()
+    coro2.close()
+
+    async def _terminate_non_owner():
+        await a_follower.terminate()
+    asyncio.run(_terminate_non_owner())
+    # owner 的锁未被非 owner 复位
+    assert adapter_mod._SERVER_STARTED is True
+    assert adapter_mod._server_owner is a_owner
+
+    # owner 重启（新实例）：锁仍持有 → 不重复绑定
+    a_owner2, _ = _adapter(monkeypatch, _base_plugin_conf(str(tmp_path)))
+    a_owner2.app.run_task = fake_run_task
+    coro3 = a_owner2.run()
+    assert calls == [("0.0.0.0", 9000)]   # app.run_task 未被再次调用
+    coro3.close()
+
+
+def test_terminate_owner_resets_server_started(tmp_path, monkeypatch, _reset_server_owner):
+    """owner 调 terminate() → 复位 _SERVER_STARTED + 清 _server_owner，允许重启重新绑定。"""
+    from astrbot_plugin_botapi.adapter import BotApiAdapter
+    import astrbot_plugin_botapi.adapter as adapter_mod
+
+    a_owner, _ = _adapter(monkeypatch, _base_plugin_conf(str(tmp_path)))
+    calls = []
+
+    def fake_run_task(*, host, port, shutdown_trigger=None):
+        calls.append((host, port))
+
+        async def _never():
+            await asyncio.Event().wait()
+
+        return _never()
+
+    a_owner.app.run_task = fake_run_task
+    coro1 = a_owner.run()
+    assert calls == [("0.0.0.0", 9000)]
+    coro1.close()
+
+    async def _terminate_owner():
+        await a_owner.terminate()
+    asyncio.run(_terminate_owner())
+    assert adapter_mod._SERVER_STARTED is False
+    assert adapter_mod._server_owner is None
+
+    # 新实例可重新绑定端口
     a2, _ = _adapter(monkeypatch, _base_plugin_conf(str(tmp_path)))
     a2.app.run_task = fake_run_task
     coro2 = a2.run()
