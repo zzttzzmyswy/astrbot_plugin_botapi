@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-08-04
+
+### 修复
+
+- **会话 id 双重前缀**：修复服务端报告的会话 id 出现 `botapi:FriendMessage:botapi:FriendMessage:{token}`
+  双重前缀的问题。`submit_inbound` 传给 AstrMessageEvent 的 session_id 由完整 umo 改为裸 scoped key
+  （`AstrMessageEvent` 会自行拼接 `{pid}:FriendMessage:` 前缀）。此问题会导致会话上下文路由错乱、
+  管理页 Session ID 显示错误。
+
 ## [2.0.1] - 2026-08-04
 
 ### 修复
