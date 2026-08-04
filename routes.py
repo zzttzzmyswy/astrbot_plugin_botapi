@@ -269,8 +269,7 @@ def _extract_token(adapter):
 
 
 def _is_valid_token(adapter, token):
-    tokens = adapter.cfg.tokens or []
-    return token in tokens if tokens else bool(token)
+    return token in (adapter.cfg.tokens or [])
 
 
 def _get_or_create_origin(adapter, token):

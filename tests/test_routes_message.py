@@ -68,3 +68,23 @@ async def test_message_returns_message_id_only(monkeypatch):
     assert len(adapter._committed) == 1
     evt = adapter._committed[0]
     assert evt.get_extra("enable_streaming") is True
+
+
+@pytest.mark.asyncio
+async def test_message_rejects_token_not_in_list(monkeypatch):
+    """严格列表：token 不在 botapi tokens 里 → 401。"""
+    adapter = _make_adapter_with_app(monkeypatch)
+    adapter.cfg.tokens = []   # 空列表 = 拒连
+    client = adapter.app.test_client()
+    r = await client.post("/api/v1/botapi/message", json={"text": "hi"},
+                          headers={"Authorization": "Bearer any-token"})
+    assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_auth_rejects_empty_list(monkeypatch):
+    adapter = _make_adapter_with_app(monkeypatch)
+    adapter.cfg.tokens = []
+    client = adapter.app.test_client()
+    r = await client.post("/api/v1/botapi/auth", json={"token": "any-token"})
+    assert r.status_code == 401
