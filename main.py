@@ -358,7 +358,10 @@ class BotApiStar(Star):
             return Response().error("消息不能为空").__dict__
         from .routes import submit_inbound
 
-        message_id = await submit_inbound(adapter, target, text, session_id=session_id)
+        try:
+            message_id = await submit_inbound(adapter, target, text, session_id=session_id)
+        except LookupError:
+            return Response().error("未找到会话").__dict__
         return Response().ok({"message_id": message_id}).__dict__
 
     async def _do_history(self, token_hash, since=None, limit=50, session_id=""):

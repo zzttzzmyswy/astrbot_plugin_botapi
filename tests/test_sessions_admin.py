@@ -292,6 +292,15 @@ async def test_do_chat_scoped_session_id(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_do_chat_unknown_session_error(monkeypatch):
+    """未知 session_id chat → 报错而非 500。"""
+    star, adapter, _, _ = _make_star(monkeypatch, tokens=["tok"])
+    res = await star._do_chat(_hash("tok"), "你好", session_id="nope")
+    assert res["status"] == "error"
+    assert res["message"] == "未找到会话"
+
+
+@pytest.mark.asyncio
 async def test_do_history_scoped_session_id(monkeypatch):
     star, adapter, _, _ = _make_star(
         monkeypatch, tokens=["tok"], sessions={"tok": [{"id": "abc", "name": "x", "created_at": 1}]}
