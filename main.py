@@ -129,6 +129,32 @@ class BotApiStar(Star):
         if adapter is not None:
             adapter._active_platforms = set(platform_ids)
 
+    def _refresh_active_platforms(self):
+        """从 PlatformManager 拉取活跃平台并注入 adapter._active_platforms。
+
+        生产路径：binding_platform_for 依赖 adapter._active_platforms 判定绑定是否生效，
+        而该集合在 adapter __init__ 为空、又没有调用方填充时，会导致每次绑定都静默回退
+        （pid 不在空集 → 返回 None）。此方法在需要准确活跃平台的入口（platforms/stats/bind）
+        惰性调用：platform_manager 未就绪或 adapter 未就绪时静默跳过。
+        """
+        adapter = runtime().adapter
+        if adapter is None:
+            return
+        pm = getattr(self.context, "platform_manager", None)
+        if pm is None:
+            return
+        insts = getattr(pm, "platform_insts", None) or []
+        # 排除 botapi 自身（避免自我绑定）
+        ids = set()
+        for inst in insts:
+            try:
+                pid = inst.meta().id if hasattr(inst, "meta") else inst.config.get("id")
+            except Exception:
+                pid = None
+            if pid and pid != adapter.config.get("id"):
+                ids.add(pid)
+        adapter._active_platforms = ids
+
     @staticmethod
     def _hash_tok(t):
         return hashlib.sha256(t.encode()).hexdigest()[:16]
@@ -161,6 +187,7 @@ class BotApiStar(Star):
     # ── _do_* helpers（纯逻辑，可直接测试）──
 
     async def _do_stats(self):
+        self._refresh_active_platforms()
         rt = runtime()
         adapter = rt.adapter
         if not adapter:
@@ -207,6 +234,7 @@ class BotApiStar(Star):
         为空时回退到 astrbot_config 里 enable=True 的平台条目（平台就绪前/纯配置模式）。
         排除 botapi 自身（绑定到自己是无意义的路由回环）。
         """
+        self._refresh_active_platforms()
         rt = runtime()
         adapter = rt.adapter
         self_id = adapter.platform_id if adapter is not None else None
@@ -273,6 +301,7 @@ class BotApiStar(Star):
 
     async def _do_bind(self, token_hash, platform_id):
         """绑定 token → 目标平台（多机器人路由）。"""
+        self._refresh_active_platforms()
         rt = runtime()
         adapter = rt.adapter
         if not adapter:
