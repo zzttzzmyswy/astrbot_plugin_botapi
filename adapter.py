@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import threading
 import time
 import uuid
 from collections import defaultdict
@@ -17,6 +18,14 @@ from .models import BotApiConfig, SSEEvent
 from .serializer import MessageSerializer
 from .runtime import runtime
 from . import sessions as _sessions
+
+
+# 模块级单实例锁：一个 AstrBot 只允许一个 botapi 服务器。
+# PlatformManager（manager.py:52）对每个 botapi platform 条目都调 inst.run()，
+# 多个条目共享同一 host/port；锁保证只有第一个真正绑定端口，其余 run() 返回
+# 永不完成的协程（等待 _shutdown），避免重复绑定端口冲突。
+_server_lock = threading.Lock()
+_SERVER_STARTED = False
 
 
 @register_platform_adapter(
@@ -122,11 +131,21 @@ class BotApiAdapter(Platform):
 
     def run(self):
         # 单实例化：host/port 来自插件配置（插件配置页），而非平台配置。
-        # 多 botapi platform 条目都会调 run()，但模块级单实例锁由 Task 5 保证只起一个服务器。
+        # 多 botapi platform 条目都会调 run()，但模块级单实例锁保证只有第一个
+        # 真正绑定端口；后续条目返回永不完成的协程（_shutdown.wait()），
+        # 由 PlatformManager 驻留，待 terminate() 一并结束。
+        global _SERVER_STARTED
+        with _server_lock:
+            if _SERVER_STARTED:
+                return self._shutdown.wait()   # 已起过：不重复绑定端口
+            _SERVER_STARTED = True
         return self.app.run_task(host=self._host, port=self._port,
                                  shutdown_trigger=self._shutdown.wait)
 
     async def terminate(self) -> None:
+        global _SERVER_STARTED
+        with _server_lock:
+            _SERVER_STARTED = False   # 复位锁，允许重启（重新绑定端口）
         self._shutdown.set()
         for token, queues in list(self._sse_clients.items()):
             for q in queues:

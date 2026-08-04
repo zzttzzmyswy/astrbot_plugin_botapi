@@ -115,6 +115,17 @@ class BotApiStar(Star):
 
     # ── helpers ──
 
+    def sync_active_platforms(self, platform_ids):
+        """注入活跃平台集合到 adapter（供 binding_platform_for 校验目标平台是否在运行）。
+
+        启动时序：plugin_manager.reload() 先于 platform_manager.initialize()，
+        故 Star 初始化时 adapter 尚为 None；此方法由外部在平台就绪后延迟调用，
+        为空时静默跳过（不抛异常）。
+        """
+        adapter = runtime().adapter
+        if adapter is not None:
+            adapter._active_platforms = set(platform_ids)
+
     @staticmethod
     def _hash_tok(t):
         return hashlib.sha256(t.encode()).hexdigest()[:16]

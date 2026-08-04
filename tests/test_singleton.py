@@ -14,6 +14,13 @@ from pathlib import Path
 import pytest
 
 
+# 模块级 _SERVER_STARTED 跨测试持久（任务 5 单实例锁），每测前复位避免污染
+@pytest.fixture(autouse=True)
+def _reset_server_started(monkeypatch):
+    import astrbot_plugin_botapi.adapter as adapter_mod
+    monkeypatch.setattr(adapter_mod, "_SERVER_STARTED", False)
+
+
 # ── 工具 ──
 
 def _plugin_schema():
@@ -205,3 +212,125 @@ async def test_init_non_numeric_legacy_port_does_not_crash(tmp_path, monkeypatch
     # 插件配置存在且有默认值，所以 _host/_port 来自插件配置
     assert a._host == "0.0.0.0"
     assert a._port == 9000
+
+
+# ── Task 5：活跃平台注入 + 单实例 Quart 模块级锁 ──
+
+def _active_adapter(monkeypatch):
+    """构造仅含活跃平台注入所需属性的 adapter（避免 4.26 环境 _legacy_port 等路径噪音）。"""
+    import astrbot_plugin_botapi.adapter as adapter_mod
+    a = object.__new__(adapter_mod.BotApiAdapter)
+    a._active_platforms = set()
+    return a
+
+
+def test_star_injects_active_platforms(monkeypatch):
+    """Star.sync_active_platforms 把已启用平台集合注入 adapter._active_platforms。"""
+    from types import SimpleNamespace
+    from astrbot_plugin_botapi.main import BotApiStar
+    from astrbot_plugin_botapi.runtime import runtime
+
+    class FakeCM:
+        pass
+
+    def _reg(self, route, handler, methods, **kw):
+        pass
+
+    ctx = SimpleNamespace(conversation_manager=FakeCM(),
+                          message_history_manager=SimpleNamespace(),
+                          register_web_api=_reg)
+    star = BotApiStar(ctx, {"host": "0.0.0.0", "port": 9001, "botapi_bindings": {}})
+    rt = runtime()
+    a = _active_adapter(monkeypatch)
+    rt.adapter = a
+    try:
+        star.sync_active_platforms({"aiocqhttp_main", "telegram_x"})
+        assert a._active_platforms == {"aiocqhttp_main", "telegram_x"}
+    finally:
+        rt.adapter = None
+
+
+def test_sync_active_platforms_no_adapter_is_noop(monkeypatch):
+    """star 初始化时 adapter 尚为 None（plugin_manager.reload 先于 platform_manager.initialize）→ 不抛异常。"""
+    from types import SimpleNamespace
+    from astrbot_plugin_botapi.main import BotApiStar
+    from astrbot_plugin_botapi.runtime import runtime
+
+    class FakeCM:
+        pass
+
+    def _reg(self, route, handler, methods, **kw):
+        pass
+
+    ctx = SimpleNamespace(conversation_manager=FakeCM(),
+                          message_history_manager=SimpleNamespace(),
+                          register_web_api=_reg)
+    star = BotApiStar(ctx, {"host": "0.0.0.0", "port": 9001, "botapi_bindings": {}})
+    rt = runtime()
+    rt.adapter = None
+    star.sync_active_platforms({"aiocqhttp_main"})   # 不应抛异常
+
+
+def test_run_single_server_module_lock(tmp_path, monkeypatch):
+    """两个 botapi platform 条目（两个 adapter 实例）都调 run() → 模块级锁只让第一个真正绑定端口；
+    第二个返回永不完成的协程（不触发 app.run_task）。"""
+    from astrbot_plugin_botapi.adapter import BotApiAdapter
+
+    a1, _ = _adapter(monkeypatch, _base_plugin_conf(str(tmp_path)))
+    a2, _ = _adapter(monkeypatch, _base_plugin_conf(str(tmp_path)))
+
+    calls = []
+
+    def fake_run_task(*, host, port, shutdown_trigger=None):
+        calls.append((host, port))
+
+        async def _never():
+            await asyncio.Event().wait()
+
+        return _never()
+
+    a1.app.run_task = fake_run_task
+    a2.app.run_task = fake_run_task
+
+    coro1 = a1.run()
+    coro2 = a2.run()
+    # 第二个实例 entered 时 _SERVER_STARTED 已为 True → 直接走 _shutdown.wait()，不碰 app.run_task
+    assert calls == [("0.0.0.0", 9000)]
+    assert inspect.iscoroutine(coro1) and inspect.iscoroutine(coro2)
+    assert not coro1.cr_running and not coro2.cr_running
+    coro1.close()
+    coro2.close()
+
+
+def test_run_lock_after_terminate_allows_rebind(tmp_path, monkeypatch):
+    """terminate() 复位 _SERVER_STARTED → 重启后 run() 可重新绑定（单实例锁可重入）。"""
+    from astrbot_plugin_botapi.adapter import BotApiAdapter
+
+    a, _ = _adapter(monkeypatch, _base_plugin_conf(str(tmp_path)))
+    calls = []
+
+    def fake_run_task(*, host, port, shutdown_trigger=None):
+        calls.append((host, port))
+
+        async def _never():
+            await asyncio.Event().wait()
+
+        return _never()
+
+    a.app.run_task = fake_run_task
+
+    coro = a.run()
+    assert calls == [("0.0.0.0", 9000)]
+    coro.close()
+
+    # 模拟关闭：terminate 复位全局锁
+    async def _terminate():
+        await a.terminate()
+    asyncio.run(_terminate())
+
+    # 重启（新实例）：锁已复位 → 再次真实绑定
+    a2, _ = _adapter(monkeypatch, _base_plugin_conf(str(tmp_path)))
+    a2.app.run_task = fake_run_task
+    coro2 = a2.run()
+    assert calls == [("0.0.0.0", 9000), ("0.0.0.0", 9000)]
+    coro2.close()
