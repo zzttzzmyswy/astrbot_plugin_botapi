@@ -75,10 +75,16 @@ AstrBot 每配一个 botapi platform 条目就 `run()` 一个 Quart 服务器（
 
 ### 存储
 
-插件配置新增字段（插件配置页可编辑）：
+绑定表存在 botapi platform 条目子树（`astrbot_config["platform"]` 里 type=botapi 的条目），
+与既有 tokens/nicknames/sessions 同一持久化模式。**不存插件配置 AstrBotConfig**——其
+`check_config_integrity` 会剔除 schema 未声明的任意键（已核实 `astrbot_config.py:213-216`），
+任意 token 键经插件配置会丢失。
 
 ```json
+// astrbot_config["platform"] 中 botapi 条目
 {
+  "id": "botapi",
+  "tokens": ["<token>"],
   "botapi_bindings": {
     "<token>": "<platform_id>"
   }
@@ -89,6 +95,7 @@ AstrBot 每配一个 botapi platform 条目就 `run()` 一个 Quart 服务器（
 - platform_id 是 AstrBot platform 条目 id（如 `aiocqhttp_xxx`、`telegram_xxx`）。
 - 一个 platform 可绑定多个 token（表是多对一）。
 - 未绑定的 token：保持现有 botapi 身份 UMO（`botapi:FriendMessage:{token}`），回退行为不变。
+- 插件配置 `_conf_schema.json` 仅声明 host/port（无任意键，可安全经 AstrBotConfig）。
 
 ### 管理
 

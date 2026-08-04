@@ -97,7 +97,7 @@ def test_conf_schema_declares_port_and_bindings():
     from pathlib import Path
     schema = json.loads(
         Path("astrbot_plugin_botapi/_conf_schema.json").read_text(encoding="utf-8-sig"))
-    assert "host" in schema and "port" in schema and "botapi_bindings" in schema
+    assert "host" in schema and "port" in schema
     assert schema["port"]["type"] == "int"
 ```
 
@@ -108,18 +108,12 @@ Expected: FAIL（`_conf_schema.json` 不存在；`run()` 仍起服务器）
 
 - [ ] **Step 3: 实现最小代码**
 
-`_conf_schema.json`（新建）：
+`_conf_schema.json`（新建；绑定表不在此——存平台子树，见 Task 2）：
 
 ```json
 {
   "host": {"description": "botapi 监听地址", "type": "string", "default": "0.0.0.0"},
-  "port": {"description": "botapi 监听端口", "type": "int", "default": 9000},
-  "botapi_bindings": {
-    "description": "botapi 账户绑定机器人：{token: platform_id}",
-    "type": "object",
-    "items": {"type": "string"},
-    "default": {}
-  }
+  "port": {"description": "botapi 监听端口", "type": "int", "default": 9000}
 }
 ```
 
@@ -213,11 +207,17 @@ git commit -m "feat(server): 插件配置 schema + adapter.run() no-op + 单例 
 - Test: `astrbot_plugin_botapi/tests/test_binding_storage.py`（新建）
 
 **Interfaces:**
-- Consumes: Task 1 的插件配置 `botapi_bindings`
+- Consumes: Task 1 的 adapter 结构；既有 tokens/sessions 持久化模式
 - Produces:
   - `BotApiAdapter.binding_platform_for(token) -> str | None`（读绑定表，校验 platform 活跃）
   - `BotApiAdapter.bind_token(token, platform_id)` / `unbind_token(token)`（写绑定表 + 持久化）
   - Web 路由：`POST accounts/<token_hash>/bind` body `{platform_id}`、`POST accounts/<token_hash>/unbind`
+
+**存储决策（Task 1 实现后修正）**：绑定表**不存插件配置 AstrBotConfig**——`AstrBotConfig.check_config_integrity`
+会把 schema 未声明的任意键剔除（已核实 `astrbot_config.py:213-216`）。绑定表存在
+`adapter.config["botapi_bindings"]`，并经 `astrbot_config["platform"]` 平台子树持久化
+（与既有 tokens/nicknames/sessions 同一模式，`_persist_account_state` 同路径）。这样任意 token 键
+不经过插件配置 schema 校验，重启不丢。
 
 - [ ] **Step 1: 写失败测试**（`tests/test_binding_storage.py`）
 
@@ -324,11 +324,13 @@ Expected: FAIL（`binding_platform_for` 不存在）
         return Response().ok({"message": "绑定成功"}).__dict__
 
     def _persist_bindings(self, adapter):
-        """把 adapter.config 的绑定表同步到插件配置并落盘。"""
-        # 插件配置 AstrBotConfig 的保存路径
-        if self._plugin_conf:
-            self._plugin_conf["botapi_bindings"] = adapter.config.get("botapi_bindings") or {}
-            self._plugin_conf.save_config()
+        """把 adapter.config 的绑定表同步到 astrbot_config 平台子树并落盘（与 tokens/sessions 同模式）。"""
+        from astrbot.core import astrbot_config as _cfg_singleton
+        for p in _cfg_singleton.get("platform", []):
+            if p.get("id") == adapter.config.get("id"):
+                p["botapi_bindings"] = adapter.config.get("botapi_bindings") or {}
+                break
+        _cfg_singleton.save_config()
 ```
 
 Web 路由注册（`__init__`）：
