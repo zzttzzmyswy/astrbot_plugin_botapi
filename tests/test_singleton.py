@@ -21,6 +21,17 @@ def _reset_server_started(monkeypatch):
     monkeypatch.setattr(adapter_mod, "_SERVER_STARTED", False)
 
 
+# 插件配置单例跨测试持久（任务 2 后 adapter.__init__ 读全局单例），每测前复位，
+# 否则上一测试的 tmp_path 插件配置会污染本测试（get_astrbot_config_path 已换新 tmp_path，
+# 但单例仍缓存旧路径的配置）。
+@pytest.fixture(autouse=True)
+def _reset_plugin_conf():
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.reset_plugin_conf()
+    yield
+    pc.reset_plugin_conf()
+
+
 # ── 工具 ──
 
 def _plugin_schema():

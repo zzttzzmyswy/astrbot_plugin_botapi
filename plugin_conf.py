@@ -23,11 +23,12 @@ def load_plugin_conf():
     if _conf is None:
         from astrbot.core.utils.astrbot_path import get_astrbot_config_path
         from astrbot.core.config.astrbot_config import AstrBotConfig
-        _conf = AstrBotConfig(
-            config_path=os.path.join(get_astrbot_config_path(),
-                                     "astrbot_plugin_botapi_config.json"),
-            schema=_load_schema(),
-        )
+        conf_path = os.path.join(get_astrbot_config_path(),
+                                 "astrbot_plugin_botapi_config.json")
+        # AstrBotConfig 在配置文件缺失时会 save_config 落盘默认配置；若 data/config 目录
+        # 不存在（未跑 `astrbot init` 的测试环境）会 FileNotFoundError，这里先确保目录存在。
+        os.makedirs(os.path.dirname(conf_path) or ".", exist_ok=True)
+        _conf = AstrBotConfig(config_path=conf_path, schema=_load_schema())
     return _conf
 
 
@@ -45,11 +46,14 @@ def save():
 
 
 def get_host():
-    return load_plugin_conf().get("host") or "0.0.0.0"
+    """返回插件配置 host 原文（空/缺省为 falsy，供 __init__ 的
+    get_host() or legacy_host or "0.0.0.0" 回退链判断——注意 get_host 本身不再默认填值）。"""
+    return load_plugin_conf().get("host")
 
 
 def get_port():
-    return load_plugin_conf().get("port") or 9000
+    """返回插件配置 port 原文（空/0/缺省为 falsy，供 __init__ 回退链判断）。"""
+    return load_plugin_conf().get("port")
 
 
 def get_tokens():

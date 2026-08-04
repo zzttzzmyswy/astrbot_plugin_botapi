@@ -1,10 +1,30 @@
-# tests/test_binding_storage.py — 绑定=token 出现在目标平台 tokens 列表
+# tests/test_binding_storage.py — 绑定=插件配置 bindings 列表（token→platform_id 一对一）
+import json
+import os
 from types import SimpleNamespace
 import pytest
 
 
-def _adapter(monkeypatch, platforms=None, active=None):
+@pytest.fixture(autouse=True)
+def _conf(monkeypatch, tmp_path):
+    """重置插件配置单例 → tmp_path，预写初始配置（tokens + bindings）。"""
+    import astrbot.core.utils.astrbot_path as astrbot_path_mod
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.reset_plugin_conf()
+    monkeypatch.setattr(astrbot_path_mod, "get_astrbot_config_path", lambda: str(tmp_path))
+    conf_path = os.path.join(str(tmp_path), "astrbot_plugin_botapi_config.json")
+    os.makedirs(str(tmp_path), exist_ok=True)
+    with open(conf_path, "w", encoding="utf-8") as f:
+        json.dump({"host": "0.0.0.0", "port": 9000, "tokens": ["tok1"],
+                   "bindings": [{"token": "tok1", "platform_id": "aiocqhttp_main"}],
+                   "sessions": []}, f)
+    yield
+    pc.reset_plugin_conf()
+
+
+def _adapter(active=None):
     from astrbot_plugin_botapi.adapter import BotApiAdapter
+    from astrbot_plugin_botapi import plugin_conf as pc
     _abs = BotApiAdapter.__abstractmethods__
     BotApiAdapter.__abstractmethods__ = frozenset()
     try:
@@ -12,116 +32,99 @@ def _adapter(monkeypatch, platforms=None, active=None):
     finally:
         BotApiAdapter.__abstractmethods__ = _abs
     a.platform_id = "botapi"
-    a.config = {"id": "botapi", "tokens": ["tok1"]}
-    a.cfg = SimpleNamespace(tokens=["tok1"])
+    a.config = {"id": "botapi", "type": "botapi"}
+    a.cfg = SimpleNamespace(tokens=list(pc.get_tokens()))
     a._sse_clients = {}
     a._token_to_origin = {}
     a._active_platforms = set(active if active is not None else {"aiocqhttp_main"})
-    import astrbot_plugin_botapi.adapter as adapter_mod
-    monkeypatch.setattr(adapter_mod, "astrbot_config", {
-        "platform": list(platforms if platforms is not None else [
-            {"id": "botapi", "type": "botapi", "tokens": ["tok1"], "enable": True},
-            {"id": "aiocqhttp_main", "type": "aiocqhttp", "tokens": ["tok1"], "enable": True},
-        ]),
-    })
     return a
 
 
-def test_binding_platform_for_returns_platform(monkeypatch):
-    a = _adapter(monkeypatch)
+def _set_platform_config(monkeypatch, platforms):
+    """monkeypatch adapter 模块的 astrbot_config（绑定回退 enable 判定用）。"""
+    import astrbot_plugin_botapi.adapter as adapter_mod
+
+    class _FakeCfg(dict):
+        def __init__(self, plats):
+            super().__init__({"platform": plats})
+
+        def save_config(self):
+            self.saved = True
+
+    fake = _FakeCfg(platforms)
+    monkeypatch.setattr(adapter_mod, "astrbot_config", fake)
+    return fake
+
+
+def test_binding_platform_for_returns_platform():
+    a = _adapter()
     assert a.binding_platform_for("tok1") == "aiocqhttp_main"
 
 
-def test_binding_platform_for_unbound_returns_none(monkeypatch):
-    a = _adapter(monkeypatch, platforms=[
-        {"id": "botapi", "type": "botapi", "tokens": ["tok1"], "enable": True},
-        {"id": "aiocqhttp_main", "tokens": [], "enable": True},
-    ])
+def test_binding_platform_for_unbound_returns_none():
+    a = _adapter()
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.set_bindings([])
     assert a.binding_platform_for("tok1") is None
 
 
-def test_binding_platform_for_inactive_returns_none(monkeypatch):
-    """绑定的平台不在活跃列表 → 回退。"""
-    a = _adapter(monkeypatch, active={"telegram_x"}, platforms=[
-        {"id": "aiocqhttp_main", "tokens": ["tok1"], "enable": True},
-    ])
+def test_binding_platform_for_inactive_returns_none():
+    a = _adapter(active={"telegram_x"})
     assert a.binding_platform_for("tok1") is None
 
 
 def test_binding_platform_for_active_empty_fallback_enabled(monkeypatch):
-    """_active_platforms 为空（重启后平台注入前）→ 回退 enable=True。"""
-    a = _adapter(monkeypatch, active=set(), platforms=[
-        {"id": "botapi", "type": "botapi", "enable": True},
-        {"id": "aiocqhttp_main", "tokens": ["tok1"], "enable": True},
-        {"id": "telegram_disabled", "tokens": ["tok1"], "enable": False},
-    ])
-    # 一对一配置：tok1 在 aiocqhttp_main（enable）+ telegram_disabled（disable）→ 第一个命中优先
+    """_active_platforms 为空 → 回退该平台 enable=True。"""
+    a = _adapter(active=set())
+    _set_platform_config(monkeypatch, [{"id": "aiocqhttp_main", "enable": True}])
     assert a.binding_platform_for("tok1") == "aiocqhttp_main"
 
 
 def test_binding_platform_for_active_empty_fallback_disabled(monkeypatch):
-    a = _adapter(monkeypatch, active=set(), platforms=[
-        {"id": "telegram_disabled", "tokens": ["tok1"], "enable": False},
-    ])
+    a = _adapter(active=set())
+    _set_platform_config(monkeypatch, [{"id": "aiocqhttp_main", "enable": False}])
     assert a.binding_platform_for("tok1") is None
 
 
-def test_binding_platform_for_skips_botapi_type(monkeypatch):
-    """type=botapi 平台条目（回环）不参与绑定。"""
-    a = _adapter(monkeypatch, platforms=[
-        {"id": "other_botapi", "type": "botapi", "tokens": ["tok1"], "enable": True},
-    ])
-    assert a.binding_platform_for("tok1") is None
-
-
-def test_unbind_token_removes_from_all_platforms(monkeypatch):
-    fake = _FakeCfg([{"id": "botapi", "type": "botapi"},
-                     {"id": "a", "tokens": ["tok1", "tok2"], "enable": True},
-                     {"id": "b", "tokens": ["tok1"], "enable": True}])
-    a = _adapter(monkeypatch)
-    monkeypatch.setattr("astrbot_plugin_botapi.adapter.astrbot_config", fake)
+def test_unbind_token_removes_from_bindings():
+    a = _adapter()
     a.unbind_token("tok1")
-    assert fake.platforms[1]["tokens"] == ["tok2"]
-    assert fake.platforms[2]["tokens"] == []
-    assert fake.saved is True
+    from astrbot_plugin_botapi import plugin_conf as pc
+    assert pc.get_bindings() == []
 
 
-def test_unbind_token_no_change_no_save(monkeypatch):
-    fake = _FakeCfg([{"id": "botapi", "type": "botapi"},
-                     {"id": "a", "tokens": [], "enable": True}])
-    a = _adapter(monkeypatch)
-    monkeypatch.setattr("astrbot_plugin_botapi.adapter.astrbot_config", fake)
-    a.unbind_token("tok1")
-    assert fake.saved is None   # 无变更不落盘
+def test_unbind_token_no_change_no_save():
+    a = _adapter()
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.set_bindings([])
+    calls = []
+    orig_save = pc.save
+    pc.save = lambda: calls.append(True)
+    try:
+        a.unbind_token("tok1")
+        assert calls == []          # 无变更不落盘
+    finally:
+        pc.save = orig_save
 
 
-def test_bind_token_writes_target_and_unbinds_old(monkeypatch):
-    fake = _FakeCfg([{"id": "botapi", "type": "botapi"},
-                     {"id": "a", "tokens": ["tok1"], "enable": True},
-                     {"id": "b", "tokens": [], "enable": True}])
-    a = _adapter(monkeypatch)
-    monkeypatch.setattr("astrbot_plugin_botapi.adapter.astrbot_config", fake)
-    a.bind_token("tok1", "b")
-    assert fake.platforms[1]["tokens"] == []    # 从旧平台移除（一对一）
-    assert fake.platforms[2]["tokens"] == ["tok1"]
-    assert fake.saved is True
+def test_bind_token_writes_bindings_one_to_one():
+    a = _adapter()
+    a.bind_token("tok1", "telegram_x")
+    from astrbot_plugin_botapi import plugin_conf as pc
+    assert pc.get_bindings() == [{"token": "tok1", "platform_id": "telegram_x"}]
 
 
-def test_bind_token_skips_botapi_target(monkeypatch):
-    fake = _FakeCfg([{"id": "botapi", "type": "botapi"},
-                     {"id": "other_botapi", "type": "botapi", "tokens": []}])
-    a = _adapter(monkeypatch)
-    monkeypatch.setattr("astrbot_plugin_botapi.adapter.astrbot_config", fake)
-    a.bind_token("tok1", "other_botapi")   # 目标为 botapi 类型 → 不写入
-    assert fake.platforms[1]["tokens"] == []
+def test_bind_token_moves_existing_binding():
+    a = _adapter()
+    a.bind_token("tok1", "telegram_x")
+    a.bind_token("tok1", "discord_y")
+    from astrbot_plugin_botapi import plugin_conf as pc
+    assert pc.get_bindings() == [{"token": "tok1", "platform_id": "discord_y"}]
 
 
-class _FakeCfg(dict):
-    """模拟 astrbot_config：带 platform 列表 + save_config 计数。"""
-    def __init__(self, platforms):
-        super().__init__({"platform": platforms})
-        self.platforms = platforms
-        self.saved = None
-
-    def save_config(self):
-        self.saved = True
+def test_bind_token_skips_botapi_target():
+    a = _adapter()
+    a.bind_token("tok1", "other_botapi")
+    from astrbot_plugin_botapi import plugin_conf as pc
+    # 目标为 botapi 类型平台条目 → 不写入，保留原绑定
+    assert pc.get_bindings() == [{"token": "tok1", "platform_id": "aiocqhttp_main"}]
