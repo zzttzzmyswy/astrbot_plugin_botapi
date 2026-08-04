@@ -151,12 +151,13 @@ class BotApiStar(Star):
         adapter = rt.adapter
         if not adapter:
             return Response().error("适配器未就绪").__dict__
-        pid = adapter.platform_id
         from . import sessions as _sessions
 
         per = []
         for token in adapter.cfg.tokens or []:
-            umo = f"{pid}:FriendMessage:{token}"
+            platform_id, tok = _sessions.bound_conversation_umo(adapter, token,
+                                                                _sessions.DEFAULT_SESSION_ID)
+            umo = f"{platform_id}:FriendMessage:{tok}"
             msg_count = 0
             try:
                 cid = await rt.conversation_manager.get_curr_conversation_id(umo)
@@ -331,8 +332,8 @@ class BotApiStar(Star):
             sid = _sessions.resolve_sid(adapter, target, session_id)
         except LookupError:
             return Response().error("未找到会话").__dict__
-        umo = _sessions.umo_for(adapter, target, sid)
-        await rt.conversation_manager.new_conversation(umo)
+        platform_id, tok = _sessions.bound_conversation_umo(adapter, target, sid)
+        await rt.conversation_manager.new_conversation(f"{platform_id}:FriendMessage:{tok}")
         return Response().ok({"message": "历史已清除"}).__dict__
 
     async def _do_set_nickname(self, token_hash, nickname):
@@ -437,9 +438,9 @@ class BotApiStar(Star):
             sid = _sessions.resolve_sid(adapter, target, session_id)
         except LookupError:
             return Response().error("未找到会话").__dict__
-        scoped_key = _sessions.scoped_key_for(adapter, target, sid)
         limit = min(int(limit), 200) if limit else 50
-        msgs = await get_conversation_messages(rt, adapter.platform_id, scoped_key, limit)
+        platform_id, tok = _sessions.bound_conversation_umo(adapter, target, sid)
+        msgs = await get_conversation_messages(rt, platform_id, tok, limit)
         return Response().ok({"messages": msgs, "has_more": False}).__dict__
 
     async def _do_sessions(self, token_hash):

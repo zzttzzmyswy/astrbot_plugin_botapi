@@ -55,6 +55,22 @@ def scoped_key_for(adapter, token: str, sid: str) -> str:
     return f"{token}:{sid}"
 
 
+def bound_conversation_umo(adapter, token: str, sid: str) -> tuple[str, str]:
+    """返回 (platform_id, scoped_token)，用于读写绑定平台 conversation。
+
+    未绑定 → (adapter.platform_id, scoped_key)；绑定 → (bound, "botapi_" + scoped_key)。
+    与 submit_inbound 的 UMO 覆写（routes.py Task 3）保持一致：绑定后 conversation
+    落在 {bound}:FriendMessage:botapi_{scoped_key}，故 /history、/clear、/stats
+    必须用同一 umo 读写。getattr 防御：旧测试 fake 无 binding_platform_for。
+    """
+    scoped_key = scoped_key_for(adapter, token, sid)
+    _bind_lookup = getattr(adapter, "binding_platform_for", None)
+    bound = _bind_lookup(token) if _bind_lookup else None
+    if bound:
+        return bound, f"botapi_{scoped_key}"
+    return adapter.platform_id, scoped_key
+
+
 def resolve_sid(adapter, token: str, sid_str) -> str:
     """解析请求里的 session_id：缺省/空/default → 'default'；校验属于该 token。"""
     sid = (sid_str or "").strip() or DEFAULT_SESSION_ID
