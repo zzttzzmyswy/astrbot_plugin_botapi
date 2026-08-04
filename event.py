@@ -45,7 +45,7 @@ class BotApiMessageEvent(AstrMessageEvent):
         # 普通回复（含 tool_direct_result 工具直答，可带媒体）
         payload = await self.adapter._serializer.serialize_chain(message, self)
         await self._broadcast(SSEEvent("message", {**payload, "streaming": False, "final": True}))
-        await self.adapter._push_media(message, self.token, mid)
+        await self.adapter._push_media(message, self.token, mid, self.sid)
         await persist_assistant_text(self.token, mid, payload.get("content", ""), kind="final")
 
     async def send_streaming(self, generator, use_fallback=False) -> None:
@@ -81,7 +81,7 @@ class BotApiMessageEvent(AstrMessageEvent):
                 await self._broadcast(SSEEvent("message", {
                     "message_id": mid, "type": "text", "content": t,
                     "streaming": True, "timestamp": int(time.time())}))
-            await self.adapter._push_media(chain, self.token, mid)
+            await self.adapter._push_media(chain, self.token, mid, self.sid)
         if self._text_buf:
             full_text.extend(self._text_buf); self._text_buf.clear()
         final_text = "".join(full_text)

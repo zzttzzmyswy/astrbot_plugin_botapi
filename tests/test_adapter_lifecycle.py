@@ -41,7 +41,7 @@ async def test_send_by_session_pushes_to_queue(monkeypatch):
     async def bcast(token, evt):
         adapter._put(adapter._sse_clients[token][0], evt)
 
-    async def push_media(chain, token, mid):
+    async def push_media(chain, token, mid, sid="default"):
         pushed.append(mid)
 
     adapter._broadcast_to = bcast

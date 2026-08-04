@@ -20,7 +20,7 @@ def _setup(monkeypatch, mid="m1", token="tok"):
         async def _broadcast_to(self, t, evt):
             received.append(evt)
 
-        async def _push_media(self, chain, t, m):
+        async def _push_media(self, chain, t, m, sid="default"):
             received.append(SSEEvent("message", {"_push_media": m}))
 
         def scoped_key_for(self, token, sid):

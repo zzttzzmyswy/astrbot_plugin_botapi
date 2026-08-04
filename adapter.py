@@ -13,6 +13,7 @@ from astrbot.core import astrbot_config
 from .models import BotApiConfig, SSEEvent
 from .serializer import MessageSerializer
 from .runtime import runtime
+from . import sessions as _sessions
 
 
 @register_platform_adapter(
@@ -83,11 +84,18 @@ class BotApiAdapter(Platform):
 
     async def send_by_session(self, session, message_chain) -> None:
         await super().send_by_session(session, message_chain)
-        token = session.session_id
+        # session.session_id 为统一消息源 umo：{pid}:FriendMessage:{token}[:{sid}]
+        sess_id = session.session_id
+        parts = sess_id.split(":")
+        token = parts[2] if len(parts) > 2 else sess_id
+        sid = parts[3] if len(parts) > 3 else "default"
         mid = f"botapi_proactive_{uuid.uuid4().hex[:12]}"
         payload = await self._serializer.serialize_chain(message_chain, None)
-        await self._broadcast_to(token, SSEEvent("message", {**payload, "streaming": False, "final": True}))
-        await self._push_media(message_chain, token, mid)
+        scoped = _sessions.scoped_key_for(self, token, sid)
+        evt = SSEEvent("message", {**payload, "streaming": False, "final": True,
+                                   "session_id": "" if sid == "default" else sid})
+        await self._broadcast_to(scoped, evt)
+        await self._push_media(message_chain, token, mid, sid)
 
     # ── 非阻塞 SSE 投递（spec §4.2）──
     def _put(self, q: asyncio.Queue, evt):
@@ -104,10 +112,11 @@ class BotApiAdapter(Platform):
         for q in list(self._sse_clients.get(token, [])):
             self._put(q, evt)
 
-    async def _push_media(self, chain, token: str, message_id: str):
+    async def _push_media(self, chain, token: str, message_id: str, sid="default"):
         if chain is None:
             return
-        queues = list(self._sse_clients.get(token, []))
+        scoped = _sessions.scoped_key_for(self, token, sid)
+        queues = list(self._sse_clients.get(scoped, []))
         for comp in (chain.chain or []):
             ct = comp.type.value.lower() if hasattr(comp.type, "value") else str(comp.type).lower()
             if ct not in ("image", "record", "file"):
@@ -120,5 +129,6 @@ class BotApiAdapter(Platform):
                 data = {"message_id": message_id, "type": mtype,
                         "content": ({"name": getattr(comp, "name", "file"), "url": url}
                                     if mtype == "file" else url),
-                        "streaming": False, "final": False, "timestamp": int(time.time())}
+                        "streaming": False, "final": False, "timestamp": int(time.time()),
+                        "session_id": "" if sid == "default" else sid}
                 self._put(q, SSEEvent("message", data))

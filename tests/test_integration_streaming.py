@@ -35,7 +35,7 @@ async def test_full_streaming_chain_to_sse(monkeypatch):
         def _put(self, q, evt):
             q.put_nowait(evt)
 
-        async def _push_media(self, chain, t, mid):
+        async def _push_media(self, chain, t, mid, sid="default"):
             pass
 
         def scoped_key_for(self, token, sid):
