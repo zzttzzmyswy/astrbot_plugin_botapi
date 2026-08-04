@@ -67,17 +67,15 @@ git clone https://github.com/zzttzzmyswy/astrbot_plugin_botapi.git
 
 WebUI「机器人/平台」编辑 botapi 实例：
 
-| 字段 | 默认 | 说明 |
-|:--|:--|:--|
-| `host` | `0.0.0.0` | 监听地址 |
-| `port` | `9000` | 手机 API 端口（nginx 反代） |
-| `tokens` | `[]` | 允许的 Token 列表（**空则允许所有非空 token**）；每个 token = 一个账户，自动隔离会话 |
-| `nicknames` | `{}` | `{token: 昵称}`，仅管理页展示用，不注入对话 |
-| `enable` | `false` | **须手动启用** |
+> 插件配置（插件配置页 `astrbot_plugin_botapi_config.json`）：
+> | `host` | `0.0.0.0` | 监听地址 |
+> | `port` | `9000` | 手机 API 端口（nginx 反代） |
+
+机器人（平台）配置 `tokens`：**绑定到该平台的 BotAPI 账户 token 列表**（每个 token 一对一绑定一个平台；空列表则不绑定任何账户）。botapi 平台条目的 `tokens` 是账户注册表（新增账户在这里管理；`auth` 严格校验，token 必须在列表内）。
 
 另需在 AstrBot 全局配置设 **`callback_api_base`**（仪表盘外部可达地址，如 `http://your-host:6185`）——媒体 URL 依赖它；不配则媒体功能降级（文本不受影响）。
 
-> **多账户**：一个 botapi 实例 + `tokens` 填多个即可，一个端口服务所有账户，每个 token 自动隔离会话/历史/SSE。不要建多个 botapi 实例（每个是独立 Quart，不能共享端口）。
+> **多账户**：一个 botapi 实例即可，一个端口服务所有账户，每个账户 token 自动隔离会话/历史/SSE。不要建多个 botapi 实例（每个是独立 Quart，不能共享端口）。
 
 ## 手机端接口
 

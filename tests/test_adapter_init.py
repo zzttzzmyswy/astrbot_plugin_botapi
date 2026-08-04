@@ -18,8 +18,6 @@ async def test_init_with_full_platform_config(tmp_path, monkeypatch):
         "host": "127.0.0.1", "port": 8080, "tokens": ["t1", "t2"],
     }
     adapter = BotApiAdapter(platform_config, {}, asyncio.Queue())
-    assert adapter.cfg.host == "127.0.0.1"
-    assert adapter.cfg.port == 8080
     assert adapter.cfg.tokens == ["t1", "t2"]
     assert adapter.platform_id == "botapi"
     assert adapter._upload_dir.exists()        # mkdir 执行

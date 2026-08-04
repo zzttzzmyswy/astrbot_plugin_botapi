@@ -54,19 +54,19 @@ def _adapter(monkeypatch, plugin_conf):
 def _base_plugin_conf(conf_dir):
     return {
         "conf_dir": conf_dir,
-        "conf": {"host": "0.0.0.0", "port": 9000, "botapi_bindings": {}},
+        "conf": {"host": "0.0.0.0", "port": 9000},
     }
 
 
 # ── schema 声明 ──
 
-def test_conf_schema_declares_host_port_bindings():
-    """插件配置 schema 必须声明 host/port/botapi_bindings。"""
+def test_conf_schema_declares_host_port():
+    """插件配置 schema 必须声明 host/port，不再有 botapi_bindings。"""
     schema = _plugin_schema()
-    assert "host" in schema and "port" in schema and "botapi_bindings" in schema
+    assert "host" in schema and "port" in schema
+    assert "botapi_bindings" not in schema
     assert schema["host"]["type"] == "string"
     assert schema["port"]["type"] == "int"
-    assert schema["botapi_bindings"]["type"] == "object"
 
 
 # ── adapter 读插件配置 host/port ──
@@ -84,7 +84,7 @@ async def test_init_reads_host_port_from_plugin_config(tmp_path, monkeypatch):
 async def test_init_plugin_config_overrides_platform_config(tmp_path, monkeypatch):
     """插件配置里显式 host/port 优先于平台配置。"""
     c = _base_plugin_conf(str(tmp_path))
-    c["conf"] = {"host": "10.1.1.1", "port": 8888, "botapi_bindings": {}}
+    c["conf"] = {"host": "10.1.1.1", "port": 8888}
     a, _ = _adapter(monkeypatch, c)
     assert a._host == "10.1.1.1"
     assert a._port == 8888
@@ -131,7 +131,7 @@ async def test_legacy_port_ignores_other_platform_types(monkeypatch, tmp_path):
 async def test_init_legacy_fallback_when_plugin_host_port_empty(tmp_path, monkeypatch):
     """插件配置 host/port 显式置空时回退旧平台配置（迁移场景）。"""
     c = _base_plugin_conf(str(tmp_path))
-    c["conf"] = {"host": "", "port": 0, "botapi_bindings": {}}
+    c["conf"] = {"host": "", "port": 0}
     import astrbot_plugin_botapi.adapter as adapter_mod
     monkeypatch.setattr(adapter_mod, "astrbot_config", {"platform": [
         {"id": "botapi", "type": "botapi", "host": "1.2.3.4", "port": 6666}]})
@@ -146,7 +146,7 @@ async def test_init_legacy_fallback_when_plugin_host_port_empty(tmp_path, monkey
 async def test_run_uses_plugin_config_host_port(tmp_path, monkeypatch):
     """run() 把插件配置的 host/port 传给 app.run_task（而非平台配置的 127.0.0.1:7777）。"""
     c = _base_plugin_conf(str(tmp_path))
-    c["conf"] = {"host": "0.0.0.0", "port": 9000, "botapi_bindings": {}}
+    c["conf"] = {"host": "0.0.0.0", "port": 9000}
     a, _ = _adapter(monkeypatch, c)
 
     captured = {}
@@ -170,7 +170,7 @@ async def test_run_uses_plugin_config_host_port(tmp_path, monkeypatch):
 async def test_run_returns_coroutine_without_binding(tmp_path, monkeypatch):
     """单实例化前提：run() 返回协程（供 PlatformManager 驻留），构造本身不绑定端口。"""
     c = _base_plugin_conf(str(tmp_path))
-    c["conf"] = {"host": "127.0.0.1", "port": 0, "botapi_bindings": {}}
+    c["conf"] = {"host": "127.0.0.1", "port": 0}
     a, _ = _adapter(monkeypatch, c)
     coro = a.run()
     assert inspect.iscoroutine(coro)   # 返回协程对象
@@ -245,7 +245,7 @@ def test_star_injects_active_platforms(monkeypatch):
     ctx = SimpleNamespace(conversation_manager=FakeCM(),
                           message_history_manager=SimpleNamespace(),
                           register_web_api=_reg)
-    star = BotApiStar(ctx, {"host": "0.0.0.0", "port": 9001, "botapi_bindings": {}})
+    star = BotApiStar(ctx, {"host": "0.0.0.0", "port": 9001})
     rt = runtime()
     a = _active_adapter(monkeypatch)
     rt.adapter = a
@@ -271,7 +271,7 @@ def test_sync_active_platforms_no_adapter_is_noop(monkeypatch):
     ctx = SimpleNamespace(conversation_manager=FakeCM(),
                           message_history_manager=SimpleNamespace(),
                           register_web_api=_reg)
-    star = BotApiStar(ctx, {"host": "0.0.0.0", "port": 9001, "botapi_bindings": {}})
+    star = BotApiStar(ctx, {"host": "0.0.0.0", "port": 9001})
     rt = runtime()
     rt.adapter = None
     star.sync_active_platforms({"aiocqhttp_main"})   # 不应抛异常

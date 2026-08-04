@@ -32,11 +32,9 @@ _server_owner = None   # 当前拥有服务器（绑定端口）的 adapter 实�
 @register_platform_adapter(
     "botapi",
     "BotAPI 自定义移动端适配器 — 一人一 Bot 极简移动端接入，支持弱网断连恢复",
-    default_config_tmpl={"host": "0.0.0.0", "port": 9000, "tokens": []},
+    default_config_tmpl={"tokens": []},
     config_metadata={
-        "host":   {"description": "监听地址", "type": "string", "hint": "0.0.0.0"},
-        "port":   {"description": "监听端口", "type": "int", "hint": "9000"},
-        "tokens": {"description": "允许的 Token 列表（空则允许所有非空 token）",
+        "tokens": {"description": "绑定 token 列表（账户注册表，空=拒连）",
                    "type": "list", "items": {"type": "string"}},
     },
     adapter_display_name="BotAPI 移动端",
@@ -47,10 +45,8 @@ class BotApiAdapter(Platform):
         super().__init__(platform_config, event_queue)
         self.settings = platform_settings
         # platform_config 含 @register_platform_adapter 自动补的 type/enable/id（register.py:34-41），
-        # BotApiConfig 只收 host/port/tokens，故按字段取值而非 **platform_config（否则 TypeError 'type'）。
+        # BotApiConfig 只收 tokens/sessions，故按字段取值而非 **platform_config（否则 TypeError 'type'）。
         self.cfg = BotApiConfig(
-            host=platform_config.get("host", "0.0.0.0"),
-            port=int(platform_config.get("port", 9000)),
             tokens=list(platform_config.get("tokens", [])),
             sessions=dict(platform_config.get("sessions", {})),
         )
@@ -92,6 +88,7 @@ class BotApiAdapter(Platform):
             legacy_host, legacy_port = self._legacy_port()
             self._host = legacy_host or "0.0.0.0"
             self._port = legacy_port or 9000
+        self._migrate_legacy_bindings()
         self._server_started = False
 
     def _load_plugin_schema(self):
@@ -112,6 +109,42 @@ class BotApiAdapter(Platform):
                     port = None
                 return p.get("host"), port
         return None, None
+
+    def _migrate_legacy_bindings(self):
+        """v3.0.0 把绑定存在 botapi 条目 botapi_bindings（或插件配置）。
+        迁移：展开为各目标平台 tokens；剥离 botapi 条目 botapi_bindings/nicknames/
+        host/port。幂等：无旧键即跳过，不落盘。"""
+        try:
+            platforms = astrbot_config.get("platform")
+            if not isinstance(platforms, list):
+                return
+            changed = False
+            binds = dict(self.config.get("botapi_bindings") or {})
+            if binds:
+                for tok, pid in binds.items():
+                    for p in platforms:
+                        if p.get("id") == pid and p.get("type") != "botapi":
+                            toks = [t for t in (p.get("tokens") or []) if t != tok]
+                            toks.append(tok)
+                            p["tokens"] = toks
+                            changed = True
+                            break
+            # 剥离 botapi 条目旧键（self.config 与 astrbot_config 里的条目都可能残留）
+            for p in platforms:
+                if p.get("id") == self.config.get("id"):
+                    for key in ("botapi_bindings", "nicknames", "host", "port"):
+                        if key in p:
+                            p.pop(key, None)
+                            changed = True
+                    break
+            for key in ("botapi_bindings", "nicknames", "host", "port"):
+                if key in self.config:
+                    self.config.pop(key, None)
+                    changed = True
+            if changed:
+                self._save_platforms()
+        except Exception:
+            pass
 
     def meta(self) -> PlatformMetadata:
         return PlatformMetadata(

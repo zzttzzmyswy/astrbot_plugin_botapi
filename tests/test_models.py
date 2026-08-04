@@ -26,13 +26,9 @@ def test_sse_ping_factory():
 
 def test_botapi_config_defaults():
     cfg = BotApiConfig()
-    assert cfg.host == "0.0.0.0"
-    assert cfg.port == 9000
     assert cfg.tokens == []
 
 
 def test_botapi_config_from_dict():
-    cfg = BotApiConfig(host="127.0.0.1", port=8080, tokens=["t1"])
-    assert cfg.host == "127.0.0.1"
-    assert cfg.port == 8080
+    cfg = BotApiConfig(tokens=["t1"])
     assert cfg.tokens == ["t1"]

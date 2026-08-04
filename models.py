@@ -4,8 +4,6 @@ from dataclasses import dataclass, field
 
 @dataclass
 class BotApiConfig:
-    host: str = "0.0.0.0"
-    port: int = 9000
     tokens: list = field(default_factory=list)
     sessions: dict = field(default_factory=dict)   # {token: [{id,name,created_at}, ...]}
 
