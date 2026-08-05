@@ -62,42 +62,15 @@ def _make_star(monkeypatch, tokens=None, sessions=None):
         unbind_token=lambda t: None,   # _do_delete 调用（真实 adapter 自带落盘）
         binding_platform_for=lambda t: None,   # _do_stats bound_platform（本文件不断言绑定）
     )
-    # sessions 数据源：写插件配置单例（sessions_list/save_sessions 全局读取）
+    # 数据源写插件配置单例（tokens/sessions 全局读取）
     from astrbot_plugin_botapi import plugin_conf as pc
+    pc.set_tokens(list(tokens or []))
     pc.set_sessions_map(all_s)
     from astrbot_plugin_botapi import runtime as rt_mod
 
     rt = rt_mod.runtime()
     rt.adapter = adapter
-    fake_cfg = {
-        "platform": [
-            {
-                "id": "botapi",
-                "tokens": list(tokens or []),
-                "sessions": dict(all_s),
-            }
-        ]
-    }
-
-    class FakeAstrbotConfig:
-        """供 main._cfg_singleton（_persist_account_state）使用；save_config 置 _saved。"""
-        def __init__(self, cfg):
-            self._cfg = cfg
-
-        def __getitem__(self, k):
-            return self._cfg[k]
-
-        def get(self, k, d=None):
-            return self._cfg.get(k, d)
-
-        def save_config(self):
-            self._cfg["_saved"] = True
-
-    import astrbot_plugin_botapi.main as main_mod
-
-    fake = FakeAstrbotConfig(fake_cfg)
-    monkeypatch.setattr(main_mod, "_cfg_singleton", fake)
-    return star, adapter, fake_cfg, registered
+    return star, adapter, registered
 
 
 def _fake_context():
@@ -140,7 +113,7 @@ def test_session_admin_routes_registered():
 @pytest.mark.asyncio
 async def test_do_clear_uses_scoped_umo(monkeypatch):
     """按会话作用域清空：session_id 命中 → umo 为 token:会话。"""
-    star, adapter, _, _ = _make_star(
+    star, adapter, _ = _make_star(
         monkeypatch, tokens=["tok"], sessions={"tok": [{"id": "abc", "name": "工作", "created_at": 1}]}
     )
 
@@ -158,7 +131,7 @@ async def test_do_clear_uses_scoped_umo(monkeypatch):
 @pytest.mark.asyncio
 async def test_do_clear_default_session_uses_token_umo(monkeypatch):
     """默认会话 clear → umo 退化为 token 基座（兼容）。"""
-    star, adapter, _, _ = _make_star(monkeypatch, tokens=["tok"])
+    star, adapter, _ = _make_star(monkeypatch, tokens=["tok"])
 
     class FakeCM:
         async def new_conversation(self, umo):
@@ -175,7 +148,7 @@ async def test_do_clear_default_session_uses_token_umo(monkeypatch):
 @pytest.mark.asyncio
 async def test_do_clear_unknown_session_error(monkeypatch):
     """未知 session_id clear → 报错不调用 new_conversation。"""
-    star, adapter, _, _ = _make_star(monkeypatch, tokens=["tok"])
+    star, adapter, _ = _make_star(monkeypatch, tokens=["tok"])
     calls = []
 
     class FakeCM:
@@ -194,7 +167,7 @@ async def test_do_clear_unknown_session_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_do_sessions_lists_with_default(monkeypatch):
-    star, adapter, _, _ = _make_star(
+    star, adapter, _ = _make_star(
         monkeypatch, tokens=["tok"], sessions={"tok": [{"id": "abc", "name": "工作", "created_at": 1}]}
     )
     res = await star._do_sessions(_hash("tok"))
@@ -205,7 +178,7 @@ async def test_do_sessions_lists_with_default(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_do_sessions_unknown_account(monkeypatch):
-    star, adapter, _, _ = _make_star(monkeypatch, tokens=["tok"])
+    star, adapter, _ = _make_star(monkeypatch, tokens=["tok"])
     res = await star._do_sessions("deadbeef")
     assert res["status"] == "error"
     assert res["message"] == "未找到账户"
@@ -213,7 +186,7 @@ async def test_do_sessions_unknown_account(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_do_create_session(monkeypatch):
-    star, adapter, fake_cfg, _ = _make_star(monkeypatch, tokens=["tok"])
+    star, adapter, _ = _make_star(monkeypatch, tokens=["tok"])
     from astrbot_plugin_botapi import plugin_conf as pc
     res = await star._do_create_session(_hash("tok"), "工作")
     assert res["status"] == "ok"
@@ -227,7 +200,7 @@ async def test_do_create_session(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_do_create_session_empty_name(monkeypatch):
-    star, adapter, _, _ = _make_star(monkeypatch, tokens=["tok"])
+    star, adapter, _ = _make_star(monkeypatch, tokens=["tok"])
     res = await star._do_create_session(_hash("tok"), "   ")
     assert res["status"] == "error"
     assert res["message"] == "会话名称不能为空"
@@ -235,7 +208,7 @@ async def test_do_create_session_empty_name(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_do_rename_session(monkeypatch):
-    star, adapter, fake_cfg, _ = _make_star(
+    star, adapter, _ = _make_star(
         monkeypatch, tokens=["tok"], sessions={"tok": [{"id": "abc", "name": "旧名", "created_at": 1}]}
     )
     from astrbot_plugin_botapi import plugin_conf as pc
@@ -250,7 +223,7 @@ async def test_do_rename_session(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_do_rename_session_unknown(monkeypatch):
-    star, adapter, _, _ = _make_star(monkeypatch, tokens=["tok"])
+    star, adapter, _ = _make_star(monkeypatch, tokens=["tok"])
     res = await star._do_rename_session(_hash("tok"), "nope", "x")
     assert res["status"] == "error"
     assert res["message"] == "未找到会话"
@@ -259,7 +232,7 @@ async def test_do_rename_session_unknown(monkeypatch):
 @pytest.mark.asyncio
 async def test_do_delete_session_calls_delete_session(monkeypatch):
     """_do_delete_session 拒删默认 + 调用 sessions.delete_session（清 conversation/SSE/存储）。"""
-    star, adapter, _, _ = _make_star(
+    star, adapter, _ = _make_star(
         monkeypatch, tokens=["tok"], sessions={"tok": [{"id": "abc", "name": "工作", "created_at": 1}]}
     )
     calls = []
@@ -294,7 +267,7 @@ async def test_do_delete_session_calls_delete_session(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_do_chat_scoped_session_id(monkeypatch):
-    star, adapter, _, _ = _make_star(
+    star, adapter, _ = _make_star(
         monkeypatch, tokens=["tok"], sessions={"tok": [{"id": "abc", "name": "x", "created_at": 1}]}
     )
     seen = {}
@@ -313,7 +286,7 @@ async def test_do_chat_scoped_session_id(monkeypatch):
 @pytest.mark.asyncio
 async def test_do_chat_unknown_session_error(monkeypatch):
     """未知 session_id chat → 报错而非 500。"""
-    star, adapter, _, _ = _make_star(monkeypatch, tokens=["tok"])
+    star, adapter, _ = _make_star(monkeypatch, tokens=["tok"])
     res = await star._do_chat(_hash("tok"), "你好", session_id="nope")
     assert res["status"] == "error"
     assert res["message"] == "未找到会话"
@@ -321,7 +294,7 @@ async def test_do_chat_unknown_session_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_do_history_scoped_session_id(monkeypatch):
-    star, adapter, _, _ = _make_star(
+    star, adapter, _ = _make_star(
         monkeypatch, tokens=["tok"], sessions={"tok": [{"id": "abc", "name": "x", "created_at": 1}]}
     )
     seen = {}
@@ -342,7 +315,7 @@ async def test_do_history_scoped_session_id(monkeypatch):
 @pytest.mark.asyncio
 async def test_stats_aggregates_scoped_sse(monkeypatch):
     """同一 token 的默认 + 分会话队列聚合为 online / sse_connections。"""
-    star, adapter, _, _ = _make_star(monkeypatch, tokens=["tok"])
+    star, adapter, _ = _make_star(monkeypatch, tokens=["tok"])
     q_d = asyncio.Queue(maxsize=1)
     q_a = asyncio.Queue(maxsize=1)
     adapter._sse_clients = {"tok": [q_d], "tok:abc": [q_a]}
@@ -355,7 +328,7 @@ async def test_stats_aggregates_scoped_sse(monkeypatch):
 @pytest.mark.asyncio
 async def test_disconnect_aggregates_scoped_sse(monkeypatch):
     """断开会话：所有分区队列收到 SESSION_KICKED，且从 _sse_clients 移除。"""
-    star, adapter, _, _ = _make_star(monkeypatch, tokens=["tok"])
+    star, adapter, _ = _make_star(monkeypatch, tokens=["tok"])
     q_d = asyncio.Queue(maxsize=1)
     q_a = asyncio.Queue(maxsize=1)
     adapter._sse_clients = {"tok": [q_d], "tok:abc": [q_a]}
@@ -373,7 +346,7 @@ async def test_disconnect_aggregates_scoped_sse(monkeypatch):
 @pytest.mark.asyncio
 async def test_do_delete_aggregates_scoped_sse(monkeypatch):
     """删除账户：scoped 队列也收到关闭哨兵（不只默认 token 分区）。"""
-    star, adapter, _, _ = _make_star(monkeypatch, tokens=["tok"])
+    star, adapter, _ = _make_star(monkeypatch, tokens=["tok"])
     q_d = asyncio.Queue(maxsize=1)
     q_a = asyncio.Queue(maxsize=1)
     adapter._sse_clients = {"tok": [q_d], "tok:abc": [q_a]}

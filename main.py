@@ -161,14 +161,11 @@ class BotApiStar(Star):
         return f"{t[:8]}...{t[-4:]}" if len(t) > 16 else t
 
     def _persist_tokens(self, adapter, new_tokens):
-        """改全局 astrbot_config 子树（tokens）+ 同步运行时副本 + 落盘。"""
-        for p in _cfg_singleton.get("platform", []):
-            if p.get("id") == adapter.config.get("id"):
-                p["tokens"] = list(new_tokens)
-                break
-        adapter.config["tokens"] = list(new_tokens)
+        """写插件配置 tokens + 更新运行时缓存 + 落盘。"""
+        from .plugin_conf import set_tokens, save
+        set_tokens(new_tokens)
         adapter.cfg.tokens = list(new_tokens)
-        _cfg_singleton.save_config()
+        save()
 
     # ── _do_* helpers（纯逻辑，可直接测试）──
 
@@ -243,8 +240,9 @@ class BotApiStar(Star):
         adapter = rt.adapter
         if not adapter:
             return Response().error("适配器未就绪").__dict__
+        from .plugin_conf import get_tokens
         token = token or uuid.uuid4().hex[:16]
-        toks = list(adapter.config.get("tokens", []))
+        toks = list(get_tokens())
         if token not in toks:
             toks.append(token)
             self._persist_tokens(adapter, toks)
@@ -255,15 +253,20 @@ class BotApiStar(Star):
         adapter = rt.adapter
         if not adapter:
             return Response().error("适配器未就绪").__dict__
+        from .plugin_conf import get_tokens, get_sessions_map, set_sessions_map, save
         target = next(
-            (t for t in adapter.config.get("tokens", []) if self._hash_tok(t) == token_hash),
+            (t for t in get_tokens() if self._hash_tok(t) == token_hash),
             None,
         )
         if not target:
             return Response().error("未找到账户").__dict__
-        toks = [t for t in adapter.config.get("tokens", []) if t != target]
+        toks = [t for t in get_tokens() if t != target]
         self._persist_tokens(adapter, toks)
-        adapter.unbind_token(target)
+        adapter.unbind_token(target)          # 清 bindings
+        all_s = get_sessions_map()
+        all_s.pop(target, None)               # 清 sessions
+        set_sessions_map(all_s)
+        save()
         from . import sessions as _sessions
 
         for q in _sessions.sse_queues_for(adapter, target):
@@ -283,8 +286,9 @@ class BotApiStar(Star):
         adapter = rt.adapter
         if not adapter:
             return Response().error("适配器未就绪").__dict__
+        from .plugin_conf import get_tokens
         target = next(
-            (t for t in (adapter.cfg.tokens or []) if self._hash_tok(t) == token_hash),
+            (t for t in get_tokens() if self._hash_tok(t) == token_hash),
             None,
         )
         if not target:
@@ -300,8 +304,9 @@ class BotApiStar(Star):
         adapter = rt.adapter
         if not adapter:
             return Response().error("适配器未就绪").__dict__
+        from .plugin_conf import get_tokens
         target = next(
-            (t for t in (adapter.cfg.tokens or []) if self._hash_tok(t) == token_hash),
+            (t for t in get_tokens() if self._hash_tok(t) == token_hash),
             None,
         )
         if not target:

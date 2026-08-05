@@ -11,6 +11,23 @@ from astrbot_plugin_botapi.main import BotApiStar
 from astrbot_plugin_botapi.runtime import runtime as _get_runtime
 
 
+@pytest.fixture(autouse=True)
+def _conf(monkeypatch, tmp_path):
+    """重置插件配置单例 → tmp_path，预写空配置（账户数据源）。"""
+    import astrbot.core.utils.astrbot_path as astrbot_path_mod
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.reset_plugin_conf()
+    monkeypatch.setattr(astrbot_path_mod, "get_astrbot_config_path", lambda: str(tmp_path))
+    import json, os
+    conf_path = os.path.join(str(tmp_path), "astrbot_plugin_botapi_config.json")
+    os.makedirs(str(tmp_path), exist_ok=True)
+    with open(conf_path, "w", encoding="utf-8") as f:
+        json.dump({"host": "0.0.0.0", "port": 9000, "tokens": [],
+                   "bindings": [], "sessions": []}, f)
+    yield
+    pc.reset_plugin_conf()
+
+
 def _row(id_, role, kind, text, ts=1719234567):
     """构造一行 platform_message_history 记录（形如 manager.get 返回项）。"""
     return SimpleNamespace(
@@ -140,6 +157,9 @@ def _make_star(monkeypatch, tokens=None, rows=None):
         message_history_manager=SimpleNamespace(),
         register_web_api=lambda r, h, m, d: None,
     )
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.set_tokens(list(tokens or []))
+    pc.save()
     star = BotApiStar(ctx, None)
     adapter = SimpleNamespace(
         cfg=SimpleNamespace(tokens=list(tokens or [])),

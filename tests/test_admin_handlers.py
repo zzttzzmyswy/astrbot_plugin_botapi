@@ -21,6 +21,23 @@ def _cleanup_runtime():
     rt.message_history_manager = None
 
 
+@pytest.fixture(autouse=True)
+def _conf(monkeypatch, tmp_path):
+    """重置插件配置单例 → tmp_path，预写空配置（账户数据源）。"""
+    import astrbot.core.utils.astrbot_path as astrbot_path_mod
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.reset_plugin_conf()
+    monkeypatch.setattr(astrbot_path_mod, "get_astrbot_config_path", lambda: str(tmp_path))
+    import json, os
+    conf_path = os.path.join(str(tmp_path), "astrbot_plugin_botapi_config.json")
+    os.makedirs(str(tmp_path), exist_ok=True)
+    with open(conf_path, "w", encoding="utf-8") as f:
+        json.dump({"host": "0.0.0.0", "port": 9000, "tokens": [],
+                   "bindings": [], "sessions": []}, f)
+    yield
+    pc.reset_plugin_conf()
+
+
 def _fake_context():
     registered = []
 
@@ -34,50 +51,31 @@ def _fake_context():
     return FakeContext(), registered
 
 
-def _make_star(monkeypatch, tokens=None, platforms=None):
+def _make_star(monkeypatch, tokens=None):
+    """真实 BotApiAdapter（免 __init__）+ 插件配置注入 tokens。"""
+    from astrbot_plugin_botapi.adapter import BotApiAdapter
+    from astrbot_plugin_botapi import plugin_conf as pc
+    from astrbot_plugin_botapi import runtime as rt_mod
+    _abs = BotApiAdapter.__abstractmethods__
+    BotApiAdapter.__abstractmethods__ = frozenset()
+    try:
+        a = object.__new__(BotApiAdapter)
+    finally:
+        BotApiAdapter.__abstractmethods__ = _abs
+    a.platform_id = "botapi"
+    a.config = {"id": "botapi", "type": "botapi"}
+    a.cfg = SimpleNamespace(tokens=list(tokens or []))
+    a._sse_clients = {}
+    a._disabled_tokens = set()
+    a._last_active = {}
+    a._active_platforms = {"aiocqhttp_main"}
+    pc.set_tokens(list(tokens or []))
+    pc.save()
+
     ctx, registered = _fake_context()
     star = BotApiStar(ctx, None)
-    adapter = SimpleNamespace(
-        cfg=SimpleNamespace(tokens=list(tokens or [])),
-        config={"id": "botapi", "tokens": list(tokens or [])},
-        platform_id="botapi",
-        _sse_clients={},
-        _disabled_tokens=set(),
-        _last_active={},
-        _put=lambda q, evt: None,
-        unbind_token=lambda t: None,   # _do_delete 调用（真实 adapter 自带落盘）
-        binding_platform_for=lambda t: None,   # _do_stats bound_platform（本文件不断言绑定）
-    )
-    from astrbot_plugin_botapi import runtime as rt_mod
-
-    rt = rt_mod.runtime()
-    rt.adapter = adapter
-    fake_cfg = {
-        "platform": list(
-            platforms
-            or [
-                {
-                    "id": "botapi",
-                    "tokens": list(tokens or []),
-                }
-            ]
-        )
-    }
-
-    class FakeAstrbotConfig:
-        def __getitem__(self, k):
-            return fake_cfg[k]
-
-        def get(self, k, d=None):
-            return fake_cfg.get(k, d)
-
-        def save_config(self):
-            fake_cfg["_saved"] = True
-
-    import astrbot_plugin_botapi.main as main_mod
-
-    monkeypatch.setattr(main_mod, "_cfg_singleton", FakeAstrbotConfig())
-    return star, adapter, fake_cfg, registered
+    rt_mod.runtime().adapter = a
+    return star, a, registered
 
 
 def _hash(t):
@@ -86,29 +84,35 @@ def _hash(t):
 
 @pytest.mark.asyncio
 async def test_create_account_persists(monkeypatch):
-    star, adapter, fake_cfg, _ = _make_star(monkeypatch, tokens=[])
+    import json, os
+    from astrbot_plugin_botapi import plugin_conf as pc
+    star, adapter, _ = _make_star(monkeypatch, tokens=[])
     token = await star._do_create("newtok")
     assert token["status"] == "ok"
     assert token["data"]["token"] == "newtok"
-    assert "newtok" in adapter.config["tokens"]
+    assert "newtok" in pc.get_tokens()
     assert "newtok" in adapter.cfg.tokens
-    assert fake_cfg.get("_saved") is True  # save_config 被调
-    assert "newtok" in fake_cfg["platform"][0]["tokens"]
+    # 配置已落盘（plugin_conf save → AstrBotConfig.save_config）
+    import astrbot.core.utils.astrbot_path as astrbot_path_mod
+    disk = json.load(open(
+        os.path.join(astrbot_path_mod.get_astrbot_config_path(),
+                     "astrbot_plugin_botapi_config.json"), encoding="utf-8-sig"))
+    assert "newtok" in disk.get("tokens", [])
 
 
 @pytest.mark.asyncio
 async def test_delete_account(monkeypatch):
-    star, adapter, fake_cfg, _ = _make_star(monkeypatch, tokens=["a", "b"])
+    from astrbot_plugin_botapi import plugin_conf as pc
+    star, adapter, _ = _make_star(monkeypatch, tokens=["a", "b"])
     result = await star._do_delete(_hash("a"))
     assert result["status"] == "ok"
-    assert "a" not in adapter.config["tokens"]
+    assert "a" not in pc.get_tokens()
     assert "a" not in adapter.cfg.tokens
-    assert fake_cfg.get("_saved") is True
 
 
 @pytest.mark.asyncio
 async def test_toggle_disable(monkeypatch):
-    star, adapter, fake_cfg, _ = _make_star(monkeypatch, tokens=["a"])
+    star, adapter, _ = _make_star(monkeypatch, tokens=["a"])
     result = await star._do_toggle(_hash("a"), disabled=True)
     assert result["status"] == "ok"
     assert "a" in adapter._disabled_tokens
@@ -116,7 +120,7 @@ async def test_toggle_disable(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_stats_envelope(monkeypatch):
-    star, adapter, fake_cfg, _ = _make_star(monkeypatch, tokens=["a", "b"])
+    star, adapter, _ = _make_star(monkeypatch, tokens=["a", "b"])
     result = await star._do_stats()
     assert result["status"] == "ok"
     assert result["data"]["total_accounts"] == 2
