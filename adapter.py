@@ -245,11 +245,8 @@ class BotApiAdapter(Platform):
             save()
 
     def bind_token(self, token: str, platform_id: str) -> None:
-        """绑定 token → 目标平台：先移除旧条目（一对一），再追加。botapi 类型目标忽略。"""
+        """绑定 token → 目标平台（含 botapi 条目）：先移除旧条目（一对一），再追加。"""
         from .plugin_conf import get_bindings, set_bindings, save
-        for p in (astrbot_config.get("platform") or []):
-            if p.get("id") == platform_id and p.get("type") == "botapi":
-                return
         binds = [b for b in get_bindings() if b.get("token") != token]
         binds.append({"token": token, "platform_id": platform_id})
         set_bindings(binds)

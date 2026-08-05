@@ -162,6 +162,19 @@ async def test_stats_includes_bound_platform(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_stats_includes_bound_platform_botapi_entry(monkeypatch):
+    """绑定到 botapi 条目（botapi_a）→ bound_platform 显示条目 id（v3.0.4 起可绑 botapi）。"""
+    star, adapter, _, _ = _make_star(
+        monkeypatch, tokens=["a", "b"], bound_to="botapi_a",
+        active={"botapi_a"},
+    )
+    res = await star._do_stats()
+    per = {a["token_hash"]: a for a in res["data"]["per_account"]}
+    assert per[_hash("a")]["bound_platform"] == "botapi_a"
+    assert per[_hash("b")]["bound_platform"] is None
+
+
+@pytest.mark.asyncio
 async def test_accounts_includes_bound_platform(monkeypatch):
     """_accounts 每条含 bound_platform。"""
     star, adapter, _, _ = _make_star(

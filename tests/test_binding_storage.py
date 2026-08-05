@@ -77,6 +77,23 @@ def test_bind_token_one_to_one_switches_platform(monkeypatch):
     assert binds[0] == {"token": "tok1", "platform_id": "aiocqhttp_backup"}
 
 
+def test_bind_token_allows_botapi_target(monkeypatch):
+    """绑定到 botapi 条目（botapi_a）→ 允许（v3.0.3 禁止，现允许）。"""
+    from astrbot_plugin_botapi import plugin_conf as pc
+    a = _adapter(monkeypatch, [], active={"botapi_a", "aiocqhttp_main"},
+                 platforms=[{"id": "botapi_a", "type": "botapi", "enable": True},
+                            {"id": "aiocqhttp_main", "enable": True}])
+    a.bind_token("tok1", "botapi_a")
+    assert pc.get_bindings() == [{"token": "tok1", "platform_id": "botapi_a"}]
+
+
+def test_binding_platform_for_botapi_entry(monkeypatch):
+    """token 绑到 botapi_a 且活跃 → 返回 botapi_a。"""
+    a = _adapter(monkeypatch, [{"token": "tok1", "platform_id": "botapi_a"}],
+                 active={"botapi_a"})
+    assert a.binding_platform_for("tok1") == "botapi_a"
+
+
 def test_unbind_token_removes_entry(monkeypatch):
     from astrbot_plugin_botapi import plugin_conf as pc
     a = _adapter(monkeypatch, [{"token": "tok1", "platform_id": "aiocqhttp_main"},
