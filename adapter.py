@@ -78,7 +78,7 @@ class BotApiAdapter(Platform):
         self._host = get_host() or legacy_host or "0.0.0.0"
         self._port = get_port() or legacy_port or 9000
         self.cfg.tokens = get_tokens()   # 运行时缓存（auth 用）
-        self._migrate_legacy_bindings()
+        self._migrate_accounts()
         self._server_started = False
 
     def _load_plugin_schema(self):
@@ -100,39 +100,70 @@ class BotApiAdapter(Platform):
                 return p.get("host"), port
         return None, None
 
-    def _migrate_legacy_bindings(self):
-        """v3.0.0 把绑定存在 botapi 条目 botapi_bindings（或插件配置）。
-        迁移：展开为各目标平台 tokens；剥离 botapi 条目 botapi_bindings/nicknames/
-        host/port。幂等：无旧键即跳过，不落盘。"""
+    def _migrate_accounts(self):
+        """把平台条目残留的账户数据收敛进插件配置（全局）。
+
+        1. 插件 tokens 为空且 botapi 平台条目 tokens 非空 → 迁到插件（并剥离条目 tokens）。
+        2. 非 botapi 平台条目 tokens 及遗留 botapi_bindings dict → 生成 bindings 条目。
+        3. 清理 botapi 平台条目的 botapi_bindings/nicknames/host/port/sessions。
+        幂等：插件 tokens 非空即视为已迁移，跳过 1（2/3 仍执行，无键即 no-op）；
+        已迁移的 botapi 条目 tokens 保留不动（只经 1 剥离一次）。
+        """
+        from .plugin_conf import get_tokens, set_tokens, get_bindings, set_bindings, save
         try:
             platforms = astrbot_config.get("platform")
             if not isinstance(platforms, list):
                 return
             changed = False
-            binds = dict(self.config.get("botapi_bindings") or {})
-            if binds:
-                for tok, pid in binds.items():
-                    for p in platforms:
-                        if p.get("id") == pid and p.get("type") != "botapi":
-                            toks = [t for t in (p.get("tokens") or []) if t != tok]
-                            toks.append(tok)
-                            p["tokens"] = toks
+            plugin_tokens = get_tokens()
+            if not plugin_tokens:
+                # 1. botapi 平台条目 tokens → 插件 tokens
+                for p in platforms:
+                    if p.get("id") == self.config.get("id"):
+                        pt = p.get("tokens") or []
+                        if pt:
+                            set_tokens(list(pt))
+                            p.pop("tokens", None)
                             changed = True
-                            break
-            # 剥离 botapi 条目旧键（self.config 与 astrbot_config 里的条目都可能残留）
+                        break
+            # 2. 非 botapi 平台条目 tokens / 遗留 botapi_bindings → bindings
+            binds = list(get_bindings())
+            existing = {b.get("token") for b in binds}
+            # 遗留 botapi_bindings dict（self.config 或 botapi 平台条目）→ {token: platform_id}
+            legacy_binds = dict(self.config.get("botapi_bindings") or {})
             for p in platforms:
                 if p.get("id") == self.config.get("id"):
-                    for key in ("botapi_bindings", "nicknames", "host", "port"):
+                    legacy_binds.update(dict(p.get("botapi_bindings") or {}))
+                    break
+            for p in platforms:
+                if p.get("type") == "botapi" or p.get("id") == self.config.get("id"):
+                    continue
+                pt = list(p.get("tokens") or [])
+                pt += [tok for tok, pid in legacy_binds.items()
+                       if pid == p.get("id") and tok not in pt]
+                if pt:
+                    for tok in pt:
+                        if tok not in existing:
+                            binds.append({"token": tok, "platform_id": p.get("id")})
+                            existing.add(tok)
+                    p.pop("tokens", None)
+                    changed = True
+            if binds:
+                set_bindings(binds)
+            # 3. 清理 botapi 平台条目旧键（tokens 仅经 1 剥离，幂等场景保留）
+            for p in platforms:
+                if p.get("id") == self.config.get("id"):
+                    for key in ("botapi_bindings", "nicknames", "host", "port", "sessions"):
                         if key in p:
                             p.pop(key, None)
                             changed = True
                     break
-            for key in ("botapi_bindings", "nicknames", "host", "port"):
+            for key in ("botapi_bindings", "nicknames", "host", "port", "sessions"):
                 if key in self.config:
                     self.config.pop(key, None)
                     changed = True
             if changed:
-                self._save_platforms()
+                save()
         except Exception:
             pass
 
@@ -243,14 +274,6 @@ class BotApiAdapter(Platform):
     # ── token→platform 绑定（多机器人）──
     # 绑定存插件配置 bindings 列表（[{token, platform_id}]，一对一）。全局数据不存
     # 平台条目（update_bot 会整体覆盖导致丢失）。
-
-    def _save_platforms(self):
-        try:
-            save = getattr(astrbot_config, "save_config", None)
-            if save:
-                save()
-        except Exception:
-            pass
 
     def binding_platform_for(self, token: str) -> str | None:
         """返回 token 绑定的 platform_id；未绑定或平台不活跃返回 None。"""
