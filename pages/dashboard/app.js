@@ -99,6 +99,8 @@ function renderAccounts() {
       <td>${a.last_active ? new Date(a.last_active * 1000).toLocaleString('zh-CN') : '-'}</td>
       <td>${a.bound_platform ? `<span class="badge badge-bound" title="已绑定 ${esc(a.bound_platform)}">${esc(a.bound_platform)}</span>` : '<span class="badge badge-offline">未绑定</span>'}</td>
       <td>
+        <button class="btn btn-sm btn-secondary" data-action="bind" data-hash="${esc(a.token_hash)}">绑定</button>
+        ${a.bound_platform ? `<button class="btn btn-sm btn-secondary" data-action="unbind" data-hash="${esc(a.token_hash)}">解绑</button>` : ''}
         <button class="btn btn-sm btn-primary" data-action="chat" data-hash="${esc(a.token_hash)}">对话</button>
         <button class="btn btn-sm btn-secondary" data-action="export" data-hash="${esc(a.token_hash)}">导出</button>
         <button class="btn btn-sm btn-danger" data-action="delete" data-hash="${esc(a.token_hash)}">删除</button>
@@ -115,6 +117,8 @@ function wireDelegation() {
     if (action === "delete") await deleteAccount(hash);
     else if (action === "export") openExport(hash);
     else if (action === "chat") openSessions(hash);
+    else if (action === "bind") openBind(hash);
+    else if (action === "unbind") await unbindAccount(hash);
   });
 }
 
@@ -140,6 +144,10 @@ function setupToolbar() {
     doExport(exportTarget.hash, "md"));
   document.getElementById("btn-export-json").addEventListener("click", () =>
     doExport(exportTarget.hash, "json"));
+  // 绑定模态
+  document.getElementById("btn-bind-save").addEventListener("click", bindAccount);
+  document.getElementById("btn-bind-cancel").addEventListener("click", () =>
+    document.getElementById("modal-bind").classList.add("hidden"));
 }
 
 let exportTarget = { hash: "" };
@@ -176,6 +184,51 @@ async function deleteAccount(tokenHash) {
     await bridge.apiPost(`accounts/${tokenHash}/delete`, {});
     await refresh();
   } catch (err) { toast("删除失败: " + (err?.message || err)); }
+}
+
+// ── 绑定机器人（下拉选活跃平台，页内模态替代 prompt）──
+
+let bindTarget = { hash: "" };
+
+async function openBind(tokenHash) {
+  bindTarget = { hash: tokenHash };
+  const select = document.getElementById("select-bind-platform");
+  select.innerHTML = '<option value="">加载中...</option>';
+  document.getElementById("modal-bind").classList.remove("hidden");
+  let platforms = [];
+  try {
+    const res = await bridge.apiGet("platforms");
+    platforms = (res.platforms && res.platforms.length) ? res.platforms : [];
+  } catch (err) {
+    log("load platforms ERR", err);
+  }
+  if (!platforms.length) {
+    document.getElementById("bind-msg").textContent =
+      "没有可绑定的活跃平台（需在 AstrBot 中启用其他平台）。";
+  } else {
+    document.getElementById("bind-msg").textContent =
+      `选择「${bindTarget.hash}」使用的机器人（绑定后对话走该平台的 LLM 配置）：`;
+  }
+  select.innerHTML = platforms.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join("");
+}
+
+async function bindAccount() {
+  const platformId = document.getElementById("select-bind-platform").value;
+  if (!platformId) { toast("没有可绑定的平台"); return; }
+  try {
+    await bridge.apiPost(`accounts/${bindTarget.hash}/bind`, { platform_id: platformId });
+    document.getElementById("modal-bind").classList.add("hidden");
+    toast(`已绑定 ${platformId}`);
+    await refresh();
+  } catch (err) { toast("绑定失败: " + (err?.message || err)); }
+}
+
+async function unbindAccount(tokenHash) {
+  if (!(await confirmDialog(`确定解绑该账户？解绑后回到默认单机路由。`))) return;
+  try {
+    await bridge.apiPost(`accounts/${tokenHash}/unbind`, {});
+    await refresh();
+  } catch (err) { toast("解绑失败: " + (err?.message || err)); }
 }
 
 function esc(s) {
