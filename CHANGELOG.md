@@ -208,12 +208,12 @@
 - BotAPI 适配器插件首个可用版本：`/auth` `/message` `/upload` `/stream` `/history` 五端点，纯 SSE 回复，逐 token 流式，断连重连自动补消息，多账户隔离，Dashboard 管理页。
 - 完整手机端 API 文档 `docs/API.md`。
 
-[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v2.0.2...HEAD
+[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v3.0.1...HEAD
+[3.0.1]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v3.0.1
 [3.0.0]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v3.0.0
 [2.0.2]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v2.0.2
 [2.0.1]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v2.0.1
 [2.0.0]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v2.0.0
-[3.0.0]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v3.0.0
 [1.3.1]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.3.1
 [1.3.0]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.3.0
 [1.2.6]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v1.2.6
