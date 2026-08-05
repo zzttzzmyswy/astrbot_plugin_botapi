@@ -3,6 +3,15 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [3.0.5] - 2026-08-05
+
+### Fixed
+
+- **新建平台下拉看不到 botapi**：`default_config_tmpl` 曾传空 `{}`，被 AstrBot
+  config_service 的 `if not platform.default_config_tmpl: continue` 跳过，导致 botapi
+  不进新建平台的 config_template。补最小模板 `{id, type, enable}`（type/enable/id 仅在
+  模板非空时由注册装饰器自动注入）。
+
 ## [3.0.4] - 2026-08-05
 
 ### Changed
