@@ -52,7 +52,9 @@ class BotApiAdapter:
         """把平台条目残留的账户数据收敛进插件配置（全局）。
 
         1. 插件 tokens 为空且 botapi 平台条目 tokens 非空 → 迁到插件（剥离条目 tokens）。
-        2. 清理 botapi 平台条目的 botapi_bindings/nicknames/host/port/sessions。
+        2. 清理 botapi 平台条目的 botapi_bindings/nicknames/host/port/sessions，
+           并禁用所有 type==botapi 条目（enable=False，v3.0.3 起 botapi 非平台适配器，
+           残留 enable 条目会让 PlatformManager 启动报 adapter not found）。
         幂等：插件 tokens 非空即视为已迁移，跳过 1（2 仍执行，无键即 no-op）；
         已迁移的 botapi 条目 tokens 保留不动（只经 1 剥离一次）。
         绑定关系存插件配置 bindings 表（后台重建策略），迁移不做 bindings→平台展开。
@@ -75,14 +77,19 @@ class BotApiAdapter:
                             p.pop("tokens", None)
                             changed = True
                         break
-            # 2. 清理 botapi 平台条目旧键（tokens 仅经 1 剥离，幂等场景保留）
+            # 2. 清理 botapi 平台条目旧键并禁用（tokens 仅经 1 剥离，幂等场景保留）。
+            #    v3.0.3 起 botapi 非平台适配器，残留 enable 条目须设 False，
+            #    否则 PlatformManager 每次启动 log adapter not found（manager.py:108）。
+            #    遍历所有 type==botapi 条目（不只 id 首个），处理其他 id 的 botapi 残留。
             for p in platforms:
-                if p.get("id") == botapi_id:
+                if p.get("type") == botapi_id:
                     for key in ("botapi_bindings", "nicknames", "host", "port", "sessions"):
                         if key in p:
                             p.pop(key, None)
                             changed = True
-                    break
+                    if p.get("enable") is not False:
+                        p["enable"] = False
+                        changed = True
             if changed:
                 save()
                 # 平台条目清理必须持久化到 astrbot_config（核心 config.json），否则磁盘残留旧键，
