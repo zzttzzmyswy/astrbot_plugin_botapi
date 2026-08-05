@@ -116,6 +116,20 @@ async def test_init_missing_plugin_config_file_uses_defaults(tmp_path, monkeypat
     assert os.path.exists(os.path.join(conf_dir, "astrbot_plugin_botapi_config.json"))
 
 
+@pytest.mark.asyncio
+async def test_init_migrates_platform_tokens_then_populates_auth_cache(tmp_path, monkeypatch):
+    """首次升级启动端到端：astrbot_config 平台条目有 tokens → adapter.__init__ 的迁移
+    把 tokens 移入插件配置，且 cfg.tokens（auth 缓存）拿到迁移后值（顺序：迁移先于快照）。"""
+    import astrbot_plugin_botapi.adapter as adapter_mod
+    monkeypatch.setattr(adapter_mod, "astrbot_config", {"platform": [
+        {"id": "botapi", "type": "botapi", "tokens": ["t1"], "enable": True},
+    ]})
+    a, conf_path = _adapter(monkeypatch, _base_plugin_conf(str(tmp_path)))
+    from astrbot_plugin_botapi import plugin_conf as pc
+    assert pc.get_tokens() == ["t1"]     # 平台 tokens 已迁入插件配置
+    assert a.cfg.tokens == ["t1"]        # auth 缓存拿到迁移后值
+
+
 # ── 迁移回退：旧平台配置 host/port ──
 
 @pytest.mark.asyncio

@@ -77,8 +77,8 @@ class BotApiAdapter(Platform):
         legacy_host, legacy_port = self._legacy_port()
         self._host = get_host() or legacy_host or "0.0.0.0"
         self._port = get_port() or legacy_port or 9000
-        self.cfg.tokens = get_tokens()   # 运行时缓存（auth 用）
         self._migrate_accounts()
+        self.cfg.tokens = get_tokens()   # 运行时缓存（auth 用）；须在迁移之后，否则首次升级启动缓存空 tokens 拒连
         self._server_started = False
 
     def _load_plugin_schema(self):
