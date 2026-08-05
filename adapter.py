@@ -66,8 +66,8 @@ class BotApiAdapter(Platform):
 
         1. 插件 tokens 为空且 botapi 平台条目 tokens 非空 → 迁到插件（剥离条目 tokens）。
         2. 清理 botapi 平台条目的 botapi_bindings/nicknames/host/port/sessions，
-           并禁用所有 type==botapi 条目（enable=False，v3.0.3 起 botapi 非平台适配器，
-           残留 enable 条目会让 PlatformManager 启动报 adapter not found）。
+           并重新启用所有 type==botapi 条目（enable=True，v3.0.4 起 botapi 重新注册为
+           平台适配器，entries 是绑定目标；v3.0.3 曾禁用它们防 adapter not found）。
         幂等：插件 tokens 非空即视为已迁移，跳过 1（2 仍执行，无键即 no-op）；
         已迁移的 botapi 条目 tokens 保留不动（只经 1 剥离一次）。
         绑定关系存插件配置 bindings 表（后台重建策略），迁移不做 bindings→平台展开。
@@ -90,9 +90,10 @@ class BotApiAdapter(Platform):
                             p.pop("tokens", None)
                             changed = True
                         break
-            # 2. 清理 botapi 平台条目旧键并禁用（tokens 仅经 1 剥离，幂等场景保留）。
-            #    v3.0.3 起 botapi 非平台适配器，残留 enable 条目须设 False，
-            #    否则 PlatformManager 每次启动 log adapter not found（manager.py:108）。
+            # 2. 清理 botapi 平台条目旧键并重新启用（tokens 仅经 1 剥离，幂等场景保留）。
+            #    v3.0.4 起 botapi 重新注册为平台适配器，botapi 条目恢复作为绑定目标；
+            #    原 enable=False 条目（v3.0.3 迁移残留）须恢复 True，
+            #    否则 PlatformManager 启动时该条目被跳过（绑定目标不可达）。
             #    遍历所有 type==botapi 条目（不只 id 首个），处理其他 id 的 botapi 残留。
             for p in platforms:
                 if p.get("type") == botapi_id:
@@ -100,8 +101,10 @@ class BotApiAdapter(Platform):
                         if key in p:
                             p.pop(key, None)
                             changed = True
-                    if p.get("enable") is not False:
-                        p["enable"] = False
+                    # 反转 v3.0.3：重新启用 botapi 条目（作为绑定目标）。
+                    # 重新注册后 enable 不再触发 adapter not found。
+                    if p.get("enable") is not True:
+                        p["enable"] = True
                         changed = True
             if changed:
                 save()

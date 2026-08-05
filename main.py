@@ -127,8 +127,10 @@ class BotApiStar(Star):
         rt = runtime()
         from .plugin_conf import get_host, get_port
         from .adapter import BotApiAdapter
-        adapter = BotApiAdapter(get_host() or "0.0.0.0", get_port() or 9000,
-                                rt.context.get_event_queue())
+        adapter = BotApiAdapter(
+            {"id": "botapi", "_star_managed": True, "host": get_host() or "0.0.0.0",
+             "port": get_port() or 9000},
+            {}, rt.context.get_event_queue())
         rt.adapter = adapter
         cls._server_task = asyncio.create_task(adapter.run())
 

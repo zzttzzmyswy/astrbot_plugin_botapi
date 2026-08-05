@@ -29,7 +29,7 @@ def _plugin_schema():
 
 
 def _adapter(monkeypatch, plugin_conf):
-    """构造真实 adapter（新签名）：monkeypatch get_astrbot_config_path 指向临时目录，写插件配置文件。"""
+    """构造真实 adapter（新 3 参签名，插件模式）：monkeypatch get_astrbot_config_path 指向临时目录，写插件配置文件。"""
     import astrbot.core.utils.astrbot_path as astrbot_path_mod
     from astrbot_plugin_botapi.adapter import BotApiAdapter
 
@@ -40,10 +40,7 @@ def _adapter(monkeypatch, plugin_conf):
         json.dump(plugin_conf["conf"], f, ensure_ascii=False)
     # adapter.__init__ 内部 lazy import get_astrbot_config_path → 必须 patch 源模块
     monkeypatch.setattr(astrbot_path_mod, "get_astrbot_config_path", lambda: conf_dir)
-    import astrbot_plugin_botapi.adapter as adapter_mod
-    monkeypatch.setattr(adapter_mod, "astrbot_config",
-                        {"data_path": conf_dir, "callback_api_base": ""})
-    a = BotApiAdapter("0.0.0.0", 9000, asyncio.Queue())
+    a = BotApiAdapter({"id": "botapi", "_star_managed": True}, {}, asyncio.Queue())
     return a, conf_path
 
 
@@ -91,12 +88,9 @@ async def test_init_missing_plugin_config_file_uses_defaults(tmp_path, monkeypat
     """插件配置文件不存在（首次启动）→ AstrBotConfig 按 schema 创建，取到默认 0.0.0.0:9000。"""
     import astrbot.core.utils.astrbot_path as astrbot_path_mod
     from astrbot_plugin_botapi.adapter import BotApiAdapter
-    import astrbot_plugin_botapi.adapter as adapter_mod
     conf_dir = str(tmp_path)
     monkeypatch.setattr(astrbot_path_mod, "get_astrbot_config_path", lambda: conf_dir)
-    monkeypatch.setattr(adapter_mod, "astrbot_config",
-                        {"data_path": conf_dir, "callback_api_base": ""})
-    a = BotApiAdapter("0.0.0.0", 9000, asyncio.Queue())
+    a = BotApiAdapter({"id": "botapi", "_star_managed": True}, {}, asyncio.Queue())
     assert a._host == "0.0.0.0"
     assert a._port == 9000
     # 首次启动按 schema 落盘默认配置

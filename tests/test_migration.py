@@ -59,14 +59,26 @@ def test_migrate_platform_tokens_to_plugin(monkeypatch):
     assert fake.saved is True
 
 
-def test_migrate_plugin_tokens_already_present_is_noop(monkeypatch):
+def test_migrate_reenables_botapi_entries(monkeypatch):
+    """v3.0.3 禁用的 botapi 条目 → 迁移恢复 enable=True（作为绑定目标）。"""
+    a, fake = _adapter(monkeypatch, [
+        {"id": "botapi", "type": "botapi", "enable": False},
+        {"id": "botapi_a", "type": "botapi", "enable": False},
+    ], {"id": "botapi"})
+    a._migrate_accounts()
+    assert fake.platforms[0]["enable"] is True
+    assert fake.platforms[1]["enable"] is True
+
+
+def test_migrate_plugin_tokens_already_present_keeps_tokens(monkeypatch):
+    """插件 tokens 已存在 → 平台 tokens 不迁移（步骤 1 no-op），但 enable 仍恢复为 True。"""
     a, fake = _adapter(monkeypatch, [
         {"id": "botapi", "type": "botapi", "tokens": ["t1"], "enable": False},
     ], {"id": "botapi"}, plugin_conf={"host": "0.0.0.0", "port": 9000, "tokens": ["t1"], "sessions": []})
     a._migrate_accounts()
     assert fake.platforms[0].get("tokens") == ["t1"]
-    assert fake.platforms[0]["enable"] is False
-    assert fake.saved is None
+    assert fake.platforms[0]["enable"] is True
+    assert fake.saved is True
 
 
 def test_migrate_cleans_legacy_keys(monkeypatch):
@@ -78,13 +90,13 @@ def test_migrate_cleans_legacy_keys(monkeypatch):
     a._migrate_accounts()
     for key in ("tokens", "botapi_bindings", "nicknames", "host", "port", "sessions"):
         assert key not in fake.platforms[0], f"botapi 条目残留 {key}"
-    # v3.0.3 起 botapi 非平台适配器，残留条目须禁用防启动报 adapter not found
-    assert fake.platforms[0]["enable"] is False
+    # 迁移后 botapi 条目恢复启用（作为绑定目标）
+    assert fake.platforms[0]["enable"] is True
     assert fake.saved is True
 
 
-def test_migrate_disables_all_botapi_entries(monkeypatch):
-    """所有 type==botapi 残留条目（含非 botapi id）迁移后 enable 变 False。"""
+def test_migrate_reenables_all_botapi_entries(monkeypatch):
+    """所有 type==botapi 残留条目（含非 botapi id）迁移后 enable 变 True。"""
     a, fake = _adapter(monkeypatch, [
         {"id": "botapi", "type": "botapi", "tokens": ["t1"], "enable": True,
          "host": "0.0.0.0", "port": 9000, "sessions": {"t1": []}},
@@ -94,7 +106,7 @@ def test_migrate_disables_all_botapi_entries(monkeypatch):
     a._migrate_accounts()
     for p in fake.platforms:
         assert p["type"] == "botapi"
-        assert p["enable"] is False
+        assert p["enable"] is True
     # 旧键仍被清理
     assert "host" not in fake.platforms[0]
     assert "botapi_bindings" not in fake.platforms[1]
