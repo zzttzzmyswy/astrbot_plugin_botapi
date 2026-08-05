@@ -24,12 +24,12 @@
 ## 架构
 
 ```
-手机 App ──REST+SSE──► BotAPI 适配器插件（AstrBot）
+手机 App ──REST+SSE──► BotAPI 插件（AstrBot）
                          │
-                         ├─ BotApiAdapter(Platform)  跑 HTTP 服务(端口可配) + SSE 回流
+                         ├─ BotApiAdapter(普通类)   跑 HTTP 服务(host/port 可配) + SSE 回流
                          │   └─ BotApiMessageEvent 重写 send/send_streaming 推 SSE
-                         ├─ BotApiStar(Star)        持 context，注册管理 API + 注入 managers
-                         └─ RuntimeState 单例       跨 Platform↔Star 共享状态
+                         ├─ BotApiStar(Star)        initialize 自建 adapter + 自起服务器
+                         └─ RuntimeState 单例       跨 adapter↔Star 共享状态
                                    │
                                    ▼
                          AstrBot ConversationManager（SQLite，唯一历史真相源）
@@ -51,9 +51,8 @@
    unzip astrbot_plugin_botapi.zip -d /path/to/AstrBot/data/plugins/
    # 生成 data/plugins/astrbot_plugin_botapi/（含 main.py + metadata.yaml + pages/）
    ```
-2. 重启 AstrBot。日志应见 `Platform adapter registered: botapi`。
-3. WebUI → **插件管理** → 确认 `astrbot_plugin_botapi` 已加载。
-4. WebUI → **机器人/平台** → 新增 → 选 type `botapi` → 填配置 → **启用**（`enable` 默认 false，须手动启用）。
+2. 重启 AstrBot。WebUI → **插件管理** → 确认 `astrbot_plugin_botapi` 已加载并**启用**（插件 enable 即自起服务器，无需在「机器人/平台」配置 botapi 条目）。
+3. 插件配置页确认 `host`/`port`（默认 `0.0.0.0:9000`）。
 
 ### 方式二：git clone
 
@@ -65,7 +64,7 @@ git clone https://github.com/zzttzzmyswy/astrbot_plugin_botapi.git
 
 ## 配置
 
-WebUI「机器人/平台」编辑 botapi 实例：
+WebUI → **插件管理** → `astrbot_plugin_botapi` → 插件配置页编辑：
 
 > 插件配置（插件配置页 `astrbot_plugin_botapi_config.json`）：
 > | `host` | `0.0.0.0` | 监听地址 |
@@ -79,7 +78,7 @@ WebUI「机器人/平台」编辑 botapi 实例：
 
 另需在 AstrBot 全局配置设 **`callback_api_base`**（仪表盘外部可达地址，如 `http://your-host:6185`）——媒体 URL 依赖它；不配则媒体功能降级（文本不受影响）。
 
-> **多账户**：一个 botapi 实例即可，一个端口服务所有账户，每个账户 token 自动隔离会话/历史/SSE。不要建多个 botapi 实例（每个是独立 Quart，不能共享端口）。
+> **多账户**：一个插件实例即可，一个端口服务所有账户，每个账户 token 自动隔离会话/历史/SSE。绑定到不同平台则各走该平台配置；未绑定走默认路由。
 
 ## 手机端接口
 
