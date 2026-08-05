@@ -59,33 +59,30 @@ def _fake_context():
 def _adapter(monkeypatch):
     """真实 BotApiAdapter（免 __init__）实例，供函数契约层测试。"""
     from astrbot_plugin_botapi.adapter import BotApiAdapter
+    from astrbot_plugin_botapi import plugin_conf as pc
     a = BotApiAdapter.__new__(BotApiAdapter)
     a.platform_id = "botapi"
-    a.config = {"id": "botapi", "tokens": ["tok"], "sessions": {}}
     a.cfg = SimpleNamespace(tokens=["tok"], sessions={})
     a._sse_clients = {}
     a._token_to_origin = {}
     a._active_platforms = {"aiocqhttp_main"}
-    from astrbot_plugin_botapi import plugin_conf as pc
-    pc.set_sessions_map(a.config.get("sessions") or {})
-    import astrbot_plugin_botapi.adapter as adapter_mod
-    monkeypatch.setattr(adapter_mod, "astrbot_config", {"platform": [
-        {"id": "botapi", "type": "botapi", "enable": True},
-        {"id": "aiocqhttp_main", "tokens": ["tok"], "enable": True},
-    ]})
+    pc.set_sessions_map({})
+    pc.set_bindings([{"token": "tok", "platform_id": "aiocqhttp_main"}])
     return a
 
 
 def _make_star(monkeypatch, tokens=None, bound_to=None, sessions=None):
     """仿 test_binding_handlers.py::_make_star：带 binding_platform_for 的假 adapter。
 
-    bound_to: 非空则把 token 放进该平台条目的 tokens（模拟绑定）。
+    bound_to: 非空则把 token 写进插件配置 bindings 表（模拟绑定）。
     """
     ctx, registered = _fake_context()
     star = BotApiStar(ctx, None)
     all_s = dict(sessions or {})
     from astrbot_plugin_botapi import plugin_conf as pc
     pc.set_sessions_map(all_s)
+    if bound_to:
+        pc.set_bindings([{"token": t, "platform_id": bound_to} for t in (tokens or [])])
     adapter = SimpleNamespace(
         cfg=SimpleNamespace(tokens=list(tokens or []), nicknames={}, sessions=dict(all_s)),
         config={"id": "botapi", "tokens": list(tokens or []), "nicknames": {},
@@ -98,7 +95,7 @@ def _make_star(monkeypatch, tokens=None, bound_to=None, sessions=None):
         _put=lambda q, evt: None,
     )
 
-    # 复刻真实 adapter 的 binding_platform_for 语义：token 出现在目标平台 tokens
+    # 复刻真实 adapter 的 binding_platform_for 语义：token 在 bindings 表
     # 且平台活跃才返回（无绑定 → None）。
     def binding_platform_for(t):
         if bound_to and t in (tokens or []):
@@ -110,18 +107,12 @@ def _make_star(monkeypatch, tokens=None, bound_to=None, sessions=None):
 
     rt = rt_mod.runtime()
     rt.adapter = adapter
-    platform_entries = [
-        {
-            "id": "botapi",
-            "tokens": list(tokens or []),
-            "nicknames": {},
-            "sessions": dict(all_s),
-        },
-    ]
+    fake_cfg = {
+        "platform": [{"id": "botapi", "tokens": list(tokens or []), "nicknames": {},
+                      "sessions": dict(all_s)}],
+    }
     if bound_to:
-        platform_entries.append({"id": bound_to, "type": "aiocqhttp",
-                                 "tokens": list(tokens or []), "enable": True})
-    fake_cfg = {"platform": platform_entries}
+        fake_cfg["platform"].append({"id": bound_to, "type": "aiocqhttp", "enable": True})
 
     class FakeAstrbotConfig:
         def __getitem__(self, k):

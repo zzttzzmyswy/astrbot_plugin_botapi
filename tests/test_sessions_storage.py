@@ -26,18 +26,17 @@ def _adapter(sessions_map=None, active=None, bound=None, monkeypatch=None, bound
     from astrbot_plugin_botapi import plugin_conf as pc
     a = BotApiAdapter.__new__(BotApiAdapter)
     a.platform_id = "botapi"
-    a.config = {"id": "botapi", "type": "botapi"}
     a._sse_clients = {}
     a._token_to_origin = {}
     a._active_platforms = set(active or ())
     if sessions_map:
         pc.set_sessions_map(sessions_map)
+    if bound:
+        pc.set_bindings([{"token": "tok", "platform_id": bound}])
     if monkeypatch is not None:
         import astrbot_plugin_botapi.adapter as adapter_mod
-        platforms = [{"id": "botapi", "type": "botapi", "enable": True}]
-        if bound:
-            platforms.append({"id": bound, "tokens": ["tok"], "enable": bound_enabled})
-        monkeypatch.setattr(adapter_mod, "astrbot_config", {"platform": platforms})
+        monkeypatch.setattr(adapter_mod, "astrbot_config",
+                            {"platform": [{"id": bound, "enable": bound_enabled}]})
     return a
 
 

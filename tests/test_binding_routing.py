@@ -21,14 +21,13 @@ def _conf(monkeypatch, tmp_path):
     pc.reset_plugin_conf()
 
 
-def _adapter(monkeypatch):
+def _adapter(monkeypatch, bindings=None):
     from astrbot_plugin_botapi.adapter import BotApiAdapter
     from astrbot_plugin_botapi import plugin_conf as pc
     a = BotApiAdapter.__new__(BotApiAdapter)
     a.platform_id = "botapi"
-    a.config = {"id": "botapi", "tokens": ["tok"], "sessions": {}}
     a.cfg = SimpleNamespace(tokens=["tok"], sessions={})
-    pc.set_sessions_map(a.config.get("sessions") or {})
+    pc.set_sessions_map({})
     a._sse_clients = {}
     a._token_to_origin = {}
     a.client_self_id = "self"
@@ -36,11 +35,8 @@ def _adapter(monkeypatch):
     a._serializer = SimpleNamespace()
     a.commit_event = lambda e: None
     a._active_platforms = {"aiocqhttp_main"}
-    import astrbot_plugin_botapi.adapter as adapter_mod
-    monkeypatch.setattr(adapter_mod, "astrbot_config", {"platform": [
-        {"id": "botapi", "type": "botapi", "enable": True},
-        {"id": "aiocqhttp_main", "tokens": ["tok"], "enable": True},
-    ]})
+    pc.set_bindings(list(bindings if bindings is not None else
+                          [{"token": "tok", "platform_id": "aiocqhttp_main"}]))
     return a
 
 
@@ -87,12 +83,7 @@ async def test_submit_inbound_bound_scoped_sid(monkeypatch):
 @pytest.mark.asyncio
 async def test_submit_inbound_unbound_keeps_botapi_umo(monkeypatch):
     from astrbot_plugin_botapi import routes as routes_mod
-    a = _adapter(monkeypatch)
-    import astrbot_plugin_botapi.adapter as adapter_mod
-    monkeypatch.setattr(adapter_mod, "astrbot_config", {"platform": [
-        {"id": "botapi", "type": "botapi", "enable": True},
-        {"id": "aiocqhttp_main", "tokens": [], "enable": True},
-    ]})
+    a = _adapter(monkeypatch, bindings=[])
     committed = []
 
     async def fake_persist(key, mid, text):
@@ -110,13 +101,8 @@ async def test_submit_inbound_unbound_keeps_botapi_umo(monkeypatch):
 @pytest.mark.asyncio
 async def test_submit_inbound_bound_inactive_platform_fallback_botapi(monkeypatch):
     from astrbot_plugin_botapi import routes as routes_mod
-    a = _adapter(monkeypatch)
+    a = _adapter(monkeypatch, bindings=[])
     a._active_platforms = set()
-    import astrbot_plugin_botapi.adapter as adapter_mod
-    monkeypatch.setattr(adapter_mod, "astrbot_config", {"platform": [
-        {"id": "botapi", "type": "botapi", "enable": True},
-        {"id": "aiocqhttp_main", "tokens": ["tok"], "enable": False},
-    ]})
     committed = []
 
     async def fake_persist(key, mid, text):
