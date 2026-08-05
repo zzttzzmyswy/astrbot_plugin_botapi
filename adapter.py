@@ -164,6 +164,14 @@ class BotApiAdapter(Platform):
                     changed = True
             if changed:
                 save()
+                # 平台条目清理必须持久化到 astrbot_config（核心 config.json），否则磁盘残留旧键，
+                # 用户删光账户后重启 _migrate_accounts 会从残留 tokens 复活账户。
+                try:
+                    _save = getattr(astrbot_config, "save_config", None)
+                    if _save:
+                        _save()
+                except Exception:
+                    pass
         except Exception:
             pass
 

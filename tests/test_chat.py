@@ -8,6 +8,24 @@ from astrbot_plugin_botapi.main import BotApiStar
 _hash = BotApiStar._hash_tok
 
 
+@pytest.fixture(autouse=True)
+def _conf(monkeypatch, tmp_path):
+    """隔离插件配置单例（submit_inbound 的 resolve_sid 读 sessions map）。"""
+    import os
+    import astrbot.core.utils.astrbot_path as astrbot_path_mod
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.reset_plugin_conf()
+    monkeypatch.setattr(astrbot_path_mod, "get_astrbot_config_path", lambda: str(tmp_path))
+    conf_path = os.path.join(str(tmp_path), "astrbot_plugin_botapi_config.json")
+    os.makedirs(str(tmp_path), exist_ok=True)
+    with open(conf_path, "w", encoding="utf-8") as f:
+        import json
+        json.dump({"host": "0.0.0.0", "port": 9000, "tokens": [],
+                   "bindings": [], "sessions": []}, f)
+    yield
+    pc.reset_plugin_conf()
+
+
 # ── Task 1: submit_inbound 共享 helper ──
 
 

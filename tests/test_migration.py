@@ -51,6 +51,7 @@ def test_migrate_platform_tokens_to_plugin(monkeypatch):
     from astrbot_plugin_botapi import plugin_conf as pc
     assert pc.get_tokens() == ["t1", "t2"]          # 平台 tokens → 插件
     assert "tokens" not in fake.platforms[0]         # 平台条目清空
+    assert fake.saved is True                        # 平台条目清理持久化到 astrbot_config（防复活）
 
 
 def test_migrate_target_platform_tokens_to_bindings(monkeypatch):
@@ -75,6 +76,7 @@ def test_migrate_plugin_tokens_already_present_is_noop(monkeypatch):
     a._migrate_accounts()
     assert fake.platforms[0].get("tokens") == ["t1"]   # 不动平台条目（已迁过）
     assert pc.get_tokens() == ["t1"]
+    assert fake.saved is None                          # 无清理变更 → 不持久化
 
 
 def test_migrate_cleans_botapi_entry_old_keys(monkeypatch):
@@ -90,6 +92,7 @@ def test_migrate_cleans_botapi_entry_old_keys(monkeypatch):
     assert pc.get_bindings() == [{"token": "t1", "platform_id": "aiocqhttp_main"}]
     for key in ("tokens", "botapi_bindings", "nicknames", "host", "port", "sessions"):
         assert key not in fake.platforms[0], f"botapi 条目残留 {key}"
+    assert fake.saved is True                          # 旧键清理持久化到 astrbot_config
 
 
 def test_migrate_skips_botapi_type_target(monkeypatch):
