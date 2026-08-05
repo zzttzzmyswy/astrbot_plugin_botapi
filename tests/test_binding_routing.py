@@ -22,7 +22,6 @@ def _adapter(monkeypatch):
     a._serializer = SimpleNamespace()
     a.commit_event = lambda e: None
     a._active_platforms = {"aiocqhttp_main"}
-    monkeypatch.setattr(S, "astrbot_config", {"platform": []})
     import astrbot_plugin_botapi.adapter as adapter_mod
     monkeypatch.setattr(adapter_mod, "astrbot_config", {"platform": [
         {"id": "botapi", "type": "botapi", "enable": True},

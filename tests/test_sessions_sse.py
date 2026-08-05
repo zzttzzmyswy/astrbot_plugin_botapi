@@ -27,7 +27,6 @@ def _adapter(monkeypatch):
     a._sse_clients = {}
     a._serializer = SimpleNamespace()
     a._media_enabled = True
-    monkeypatch.setattr(S, "astrbot_config", {"platform": []})
     return a
 
 

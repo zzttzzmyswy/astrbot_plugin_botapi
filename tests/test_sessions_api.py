@@ -9,6 +9,22 @@ from astrbot_plugin_botapi.adapter import BotApiAdapter
 from astrbot_plugin_botapi import routes as routes_mod
 
 
+@pytest.fixture(autouse=True)
+def _conf(monkeypatch, tmp_path):
+    """重置插件配置单例 → tmp_path（sessions 数据源）。"""
+    import astrbot.core.utils.astrbot_path as astrbot_path_mod
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.reset_plugin_conf()
+    monkeypatch.setattr(astrbot_path_mod, "get_astrbot_config_path", lambda: str(tmp_path))
+    import json, os
+    conf_path = os.path.join(str(tmp_path), "astrbot_plugin_botapi_config.json")
+    os.makedirs(str(tmp_path), exist_ok=True)
+    with open(conf_path, "w", encoding="utf-8") as f:
+        json.dump({"host": "0.0.0.0", "port": 9000, "tokens": [], "bindings": [], "sessions": []}, f)
+    yield
+    pc.reset_plugin_conf()
+
+
 # ── 纯逻辑测试（来自 task brief，verbatim）──
 
 def _adapter(monkeypatch):
@@ -24,8 +40,6 @@ def _adapter(monkeypatch):
     a._sse_clients = {}
     a._token_to_origin = {}
     a._put = lambda q, e: None
-    fake_cfg = {"platform": [{"id": "botapi", "sessions": {}}]}
-    monkeypatch.setattr(S, "astrbot_config", fake_cfg)
     return a
 
 
@@ -39,13 +53,6 @@ def test_create_session_appends(monkeypatch):
 
 
 # ── Quart test_client 端点测试（参照 test_routes_stream.py::_make_adapter）──
-
-def _fake_config():
-    return {
-        "platform": [{"id": "botapi", "sessions": {}}],
-        "save_config": lambda: None,
-    }
-
 
 def _make_adapter(monkeypatch):
     """Fully wired BotApiAdapter with Quart app + all routes registered."""
@@ -65,7 +72,6 @@ def _make_adapter(monkeypatch):
     from quart import Quart
     adapter.app = Quart("t")
     routes_mod._setup_routes(adapter)
-    monkeypatch.setattr(S, "astrbot_config", _fake_config())
     return adapter
 
 
@@ -125,7 +131,8 @@ async def test_post_sessions_limit_400(monkeypatch):
     adapter = _make_adapter(monkeypatch)
     cur = [{"id": f"s{i}", "name": f"s{i}", "created_at": i}
            for i in range(S.MAX_SESSIONS)]
-    adapter.config["sessions"] = {"tok": cur}
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.set_sessions_map({"tok": cur})
     client = adapter.app.test_client()
     r = await client.post("/api/v1/botapi/sessions", json={"name": "超了"},
                           headers={"Authorization": "Bearer tok"})

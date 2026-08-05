@@ -55,7 +55,6 @@ def _adapter(monkeypatch):
     a._sse_clients = {}
     a._token_to_origin = {}
     a._active_platforms = {"aiocqhttp_main"}
-    monkeypatch.setattr(S, "astrbot_config", {"platform": []})
     import astrbot_plugin_botapi.adapter as adapter_mod
     monkeypatch.setattr(adapter_mod, "astrbot_config", {"platform": [
         {"id": "botapi", "type": "botapi", "enable": True},

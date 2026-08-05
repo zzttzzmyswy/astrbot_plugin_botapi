@@ -1,13 +1,29 @@
 # tests/test_sessions_storage.py
-from types import SimpleNamespace
 import pytest
 
 from astrbot_plugin_botapi.models import BotApiConfig
 from astrbot_plugin_botapi import sessions as S
 
 
-def _adapter(monkeypatch=None, sessions=None, active=None, platforms=None):
+@pytest.fixture(autouse=True)
+def _conf(monkeypatch, tmp_path):
+    """重置插件配置单例 → tmp_path，预写初始配置（sessions 空）。"""
+    import astrbot.core.utils.astrbot_path as astrbot_path_mod
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.reset_plugin_conf()
+    monkeypatch.setattr(astrbot_path_mod, "get_astrbot_config_path", lambda: str(tmp_path))
+    import json, os
+    conf_path = os.path.join(str(tmp_path), "astrbot_plugin_botapi_config.json")
+    os.makedirs(str(tmp_path), exist_ok=True)
+    with open(conf_path, "w", encoding="utf-8") as f:
+        json.dump({"host": "0.0.0.0", "port": 9000, "tokens": [], "bindings": [], "sessions": []}, f)
+    yield
+    pc.reset_plugin_conf()
+
+
+def _adapter(sessions_map=None, active=None):
     from astrbot_plugin_botapi.adapter import BotApiAdapter
+    from astrbot_plugin_botapi import plugin_conf as pc
     _abs = BotApiAdapter.__abstractmethods__
     BotApiAdapter.__abstractmethods__ = frozenset()
     try:
@@ -15,19 +31,12 @@ def _adapter(monkeypatch=None, sessions=None, active=None, platforms=None):
     finally:
         BotApiAdapter.__abstractmethods__ = _abs
     a.platform_id = "botapi"
-    a.config = {"id": "botapi", "tokens": ["tok"], "sessions": sessions or {}}
-    a.cfg = SimpleNamespace(tokens=["tok"], sessions=sessions or {})
+    a.config = {"id": "botapi", "type": "botapi"}
     a._sse_clients = {}
     a._token_to_origin = {}
     a._active_platforms = set(active or ())
-    if monkeypatch is not None:
-        fake_cfg = {"platform": [{"id": "botapi", "sessions": sessions or {}}]}
-        monkeypatch.setattr(S, "astrbot_config", fake_cfg)
-        import astrbot_plugin_botapi.adapter as adapter_mod
-        # 绑定数据源：非 botapi 平台条目的 tokens 列表（与 _legacy_port 同一引用）
-        monkeypatch.setattr(adapter_mod, "astrbot_config", {
-            "platform": list(platforms if platforms is not None else []),
-        })
+    if sessions_map:
+        pc.set_sessions_map(sessions_map)
     return a
 
 
@@ -38,17 +47,18 @@ def test_config_has_sessions_field():
 
 
 def test_sessions_list_derives_default_first():
+    from astrbot_plugin_botapi import plugin_conf as pc
     a = _adapter()
     s = S.sessions_list(a, "tok")
     assert s[0]["id"] == S.DEFAULT_SESSION_ID
     assert s[0]["name"] == "默认会话"
     assert len(s) == 1
     # 不改存储
-    assert a.config["sessions"] == {}
+    assert pc.get_sessions_map() == {}
 
 
 def test_sessions_list_keeps_existing_after_default():
-    a = _adapter(sessions={"tok": [{"id": "abc", "name": "工作", "created_at": 1}]})
+    a = _adapter(sessions_map={"tok": [{"id": "abc", "name": "工作", "created_at": 1}]})
     ids = [x["id"] for x in S.sessions_list(a, "tok")]
     assert ids == ["default", "abc"]
 
@@ -62,7 +72,7 @@ def test_umo_and_scoped_key():
 
 
 def test_resolve_sid():
-    a = _adapter(sessions={"tok": [{"id": "abc", "name": "x", "created_at": 1}]})
+    a = _adapter(sessions_map={"tok": [{"id": "abc", "name": "x", "created_at": 1}]})
     assert S.resolve_sid(a, "tok", "") == "default"
     assert S.resolve_sid(a, "tok", None) == "default"
     assert S.resolve_sid(a, "tok", "default") == "default"
@@ -73,22 +83,21 @@ def test_resolve_sid():
 
 @pytest.mark.asyncio
 async def test_delete_default_session_guard():
-    a = _adapter(sessions={"tok": [{"id": "abc", "name": "x", "created_at": 1}]})
+    from astrbot_plugin_botapi import plugin_conf as pc
+    a = _adapter(sessions_map={"tok": [{"id": "abc", "name": "x", "created_at": 1}]})
     with pytest.raises(LookupError):
         await S.delete_session(a, "tok", S.DEFAULT_SESSION_ID)
     # 未改动存储、未断 SSE
     assert S.sessions_list(a, "tok")[0]["id"] == S.DEFAULT_SESSION_ID
     assert a._sse_clients == {}
-    assert "abc" in [x["id"] for x in a.config["sessions"]["tok"]]
+    assert "abc" in [x["id"] for x in pc.get_sessions_map()["tok"]]
 
 
-def test_save_sessions_persists_config_cfg_global(monkeypatch):
-    a = _adapter(monkeypatch)
+def test_save_sessions_persists_plugin_conf():
+    from astrbot_plugin_botapi import plugin_conf as pc
+    a = _adapter()
     S.save_sessions(a, "tok", [{"id": "abc", "name": "工作", "created_at": 1}])
-    assert a.config["sessions"]["tok"][0]["id"] == "abc"
-    assert a.cfg.sessions["tok"][0]["id"] == "abc"
-    # astrobot_config 平台子树被更新
-    assert S.astrbot_config["platform"][0]["sessions"]["tok"][0]["name"] == "工作"
+    assert pc.get_sessions_map()["tok"][0]["id"] == "abc"
 
 
 def test_sse_queues_for_aggregates_scoped():
@@ -103,8 +112,9 @@ def test_sse_queues_for_aggregates_scoped():
 
 
 @pytest.mark.asyncio
-async def test_delete_session_removes_and_saves(monkeypatch):
-    a = _adapter(monkeypatch, sessions={"tok": [{"id": "abc", "name": "x", "created_at": 1}]})
+async def test_delete_session_removes_and_saves():
+    from astrbot_plugin_botapi import plugin_conf as pc
+    a = _adapter(sessions_map={"tok": [{"id": "abc", "name": "x", "created_at": 1}]})
     calls = []
     import asyncio
     q = asyncio.Queue(maxsize=1)
@@ -122,10 +132,9 @@ async def test_delete_session_removes_and_saves(monkeypatch):
     # 会话被移除，默认会话仍派生在列
     assert all(x["id"] != "abc" for x in S.sessions_list(a, "tok"))
     # 持久化结果：存储里不含 abc
-    assert all(x["id"] != "abc" for x in a.config["sessions"]["tok"])
-    assert all(x["id"] != "abc" for x in a.cfg.sessions["tok"])
+    assert all(x["id"] != "abc" for x in pc.get_sessions_map()["tok"])
     # 存储里也不含 default（只读派生，不写存储）
-    assert all(x["id"] != S.DEFAULT_SESSION_ID for x in a.config["sessions"]["tok"])
+    assert all(x["id"] != S.DEFAULT_SESSION_ID for x in pc.get_sessions_map()["tok"])
     # SSE 队列收到关闭哨兵 None
     assert await q.get() is None
     # 未绑定 → 删裸 botapi UMO
@@ -133,13 +142,13 @@ async def test_delete_session_removes_and_saves(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_delete_session_bound_deletes_bound_umo(monkeypatch):
+async def test_delete_session_bound_deletes_bound_umo():
     """绑定 token 的会话删除必须用绑定平台 UMO（{bound}:FriendMessage:botapi_tok:abc），
     否则 delete_conversations_by_user_id 精确匹配不到 → 静默 no-op、会话泄漏。"""
-    a = _adapter(monkeypatch,
-                 sessions={"tok": [{"id": "abc", "name": "x", "created_at": 1}]},
-                 active={"aiocqhttp_main"},
-                 platforms=[{"id": "aiocqhttp_main", "tokens": ["tok"], "enable": True}])
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.set_bindings([{"token": "tok", "platform_id": "aiocqhttp_main"}])
+    a = _adapter(sessions_map={"tok": [{"id": "abc", "name": "x", "created_at": 1}]},
+                 active={"aiocqhttp_main"})
     calls = []
     import asyncio
     q = asyncio.Queue(maxsize=1)
@@ -162,12 +171,12 @@ async def test_delete_session_bound_deletes_bound_umo(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_delete_session_bound_inactive_uses_botapi_umo(monkeypatch):
+async def test_delete_session_bound_inactive_uses_botapi_umo():
     """绑定目标平台不在活跃集合（绑定静默回退）→ 会话实际在 botapi 自身 UMO → 删该 UMO。"""
-    a = _adapter(monkeypatch,
-                 sessions={"tok": [{"id": "abc", "name": "x", "created_at": 1}]},
-                 active=set(),
-                 platforms=[{"id": "aiocqhttp_main", "tokens": ["tok"], "enable": False}])  # 不在活跃集且 enable=False → 绑定不生效
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.set_bindings([{"token": "tok", "platform_id": "aiocqhttp_main"}])
+    a = _adapter(sessions_map={"tok": [{"id": "abc", "name": "x", "created_at": 1}]},
+                 active=set())  # 不在活跃集 → 绑定不生效
     calls = []
     import asyncio
     q = asyncio.Queue(maxsize=1)

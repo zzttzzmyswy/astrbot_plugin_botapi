@@ -21,7 +21,6 @@ def _adapter(monkeypatch):
     a._uploaded_files = {}
     a._serializer = SimpleNamespace()
     a.commit_event = lambda e: None
-    monkeypatch.setattr(S, "astrbot_config", {"platform": []})
     return a
 
 

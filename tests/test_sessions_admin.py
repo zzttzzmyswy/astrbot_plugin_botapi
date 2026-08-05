@@ -23,6 +23,22 @@ def _cleanup_runtime():
     rt.message_history_manager = None
 
 
+@pytest.fixture(autouse=True)
+def _conf(monkeypatch, tmp_path):
+    """重置插件配置单例 → tmp_path（sessions 数据源）。"""
+    import astrbot.core.utils.astrbot_path as astrbot_path_mod
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.reset_plugin_conf()
+    monkeypatch.setattr(astrbot_path_mod, "get_astrbot_config_path", lambda: str(tmp_path))
+    import json, os
+    conf_path = os.path.join(str(tmp_path), "astrbot_plugin_botapi_config.json")
+    os.makedirs(str(tmp_path), exist_ok=True)
+    with open(conf_path, "w", encoding="utf-8") as f:
+        json.dump({"host": "0.0.0.0", "port": 9000, "tokens": [], "bindings": [], "sessions": []}, f)
+    yield
+    pc.reset_plugin_conf()
+
+
 def _hash(t):
     return hashlib.sha256(t.encode()).hexdigest()[:16]
 
@@ -46,6 +62,9 @@ def _make_star(monkeypatch, tokens=None, sessions=None):
         unbind_token=lambda t: None,   # _do_delete 调用（真实 adapter 自带落盘）
         binding_platform_for=lambda t: None,   # _do_stats bound_platform（本文件不断言绑定）
     )
+    # sessions 数据源：写插件配置单例（sessions_list/save_sessions 全局读取）
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.set_sessions_map(all_s)
     from astrbot_plugin_botapi import runtime as rt_mod
 
     rt = rt_mod.runtime()
@@ -61,8 +80,7 @@ def _make_star(monkeypatch, tokens=None, sessions=None):
     }
 
     class FakeAstrbotConfig:
-        """同时供 main._cfg_singleton（_persist_account_state）与
-        sessions.astrbot_config（save_sessions）使用；save_config 置 _saved。"""
+        """供 main._cfg_singleton（_persist_account_state）使用；save_config 置 _saved。"""
         def __init__(self, cfg):
             self._cfg = cfg
 
@@ -79,10 +97,6 @@ def _make_star(monkeypatch, tokens=None, sessions=None):
 
     fake = FakeAstrbotConfig(fake_cfg)
     monkeypatch.setattr(main_mod, "_cfg_singleton", fake)
-    # save_sessions（sessions.py 内 import 的 astrbot_config）也指向同一 fake
-    import astrbot_plugin_botapi.sessions as sessions_mod
-
-    monkeypatch.setattr(sessions_mod, "astrbot_config", fake)
     return star, adapter, fake_cfg, registered
 
 
@@ -200,13 +214,15 @@ async def test_do_sessions_unknown_account(monkeypatch):
 @pytest.mark.asyncio
 async def test_do_create_session(monkeypatch):
     star, adapter, fake_cfg, _ = _make_star(monkeypatch, tokens=["tok"])
+    from astrbot_plugin_botapi import plugin_conf as pc
     res = await star._do_create_session(_hash("tok"), "工作")
     assert res["status"] == "ok"
     sid = res["data"]["session"]["id"]
     assert sid != S.DEFAULT_SESSION_ID
     ids = [x["id"] for x in S.sessions_list(adapter, "tok")]
     assert ids == ["default", sid]
-    assert fake_cfg.get("_saved") is True   # save_sessions 落盘（经 monkeypatch astrbot_config）
+    # save_sessions 落盘到插件配置 sessions map
+    assert sid in [x["id"] for x in pc.get_sessions_map()["tok"]]
 
 
 @pytest.mark.asyncio
@@ -222,11 +238,14 @@ async def test_do_rename_session(monkeypatch):
     star, adapter, fake_cfg, _ = _make_star(
         monkeypatch, tokens=["tok"], sessions={"tok": [{"id": "abc", "name": "旧名", "created_at": 1}]}
     )
+    from astrbot_plugin_botapi import plugin_conf as pc
     res = await star._do_rename_session(_hash("tok"), "abc", "新名")
     assert res["status"] == "ok"
     names = {x["name"] for x in S.sessions_list(adapter, "tok")}
     assert "新名" in names and "旧名" not in names
-    assert fake_cfg.get("_saved") is True
+    # save_sessions 落盘到插件配置 sessions map（含派生 default 在最前）
+    stored = {x["id"]: x["name"] for x in pc.get_sessions_map()["tok"]}
+    assert stored["abc"] == "新名"
 
 
 @pytest.mark.asyncio
