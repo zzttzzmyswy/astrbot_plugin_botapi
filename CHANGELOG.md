@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-08-05
+
+### 修复
+
+- **升级后账户丢失（v3.0.0 回归）**：账户数据此前存在 botapi 平台条目，WebUI 保存一次
+  平台配置即被 AstrBot `update_bot` 整体覆盖 → tokens 清空。账户数据（tokens/bindings/
+  sessions）迁入插件配置 `astrbot_plugin_botapi_config.json`（全局），botapi 平台条目
+  清空为路由占位；启动自动迁移存量平台条目账户。
+
 ## [3.0.0] - 2026-08-04
 
 ### 新增

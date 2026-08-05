@@ -1,6 +1,7 @@
 # tests/test_platforms_web.py — Task 7: GET platforms 端点 + 账户数据 bound_platform 字段
 import hashlib
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -20,6 +21,22 @@ def _cleanup_runtime():
     rt.adapter = None
     rt.conversation_manager = None
     rt.message_history_manager = None
+
+
+@pytest.fixture(autouse=True)
+def _conf(monkeypatch, tmp_path):
+    """重置插件配置单例 → tmp_path，预写空配置（账户数据源在插件配置，杜绝真实磁盘污染）。"""
+    import astrbot.core.utils.astrbot_path as astrbot_path_mod
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.reset_plugin_conf()
+    monkeypatch.setattr(astrbot_path_mod, "get_astrbot_config_path", lambda: str(tmp_path))
+    conf_path = os.path.join(str(tmp_path), "astrbot_plugin_botapi_config.json")
+    os.makedirs(str(tmp_path), exist_ok=True)
+    with open(conf_path, "w", encoding="utf-8") as f:
+        json.dump({"host": "0.0.0.0", "port": 9000, "tokens": [],
+                   "bindings": [], "sessions": []}, f)
+    yield
+    pc.reset_plugin_conf()
 
 
 def _hash(t):
@@ -351,6 +368,7 @@ async def test_platforms_refreshes_active_before_config_fallback(monkeypatch):
 async def test_bind_refresh_makes_binding_platform_for_effective(monkeypatch):
     """集成：绑定 + 惰性刷新后，真实 binding_platform_for 返回目标平台（修复前恒 None）。"""
     from astrbot_plugin_botapi import runtime as rt_mod
+    from astrbot_plugin_botapi import plugin_conf as pc
 
     star, _, fake_cfg, _ = _make_star(
         monkeypatch, tokens=["a"],
@@ -362,6 +380,7 @@ async def test_bind_refresh_makes_binding_platform_for_effective(monkeypatch):
     real = _make_real_adapter(monkeypatch)
     real.config["tokens"] = ["a"]
     real.cfg.tokens = ["a"]
+    pc.set_tokens(["a"])                       # 账户在插件配置（_do_bind 查找数据源）
     rt_mod.runtime().adapter = real
     star.context.platform_manager = _fake_pm(
         _config_only_inst("botapi"),
@@ -369,10 +388,10 @@ async def test_bind_refresh_makes_binding_platform_for_effective(monkeypatch):
     )
     # 修复前：活跃集为空 → 绑定静默失效
     assert real.binding_platform_for("a") is None
-    # _do_bind 内惰性刷新 → 活跃集注入 → 绑定生效（token 已进 aiocqhttp_main 条目 tokens）
+    # _do_bind 内惰性刷新 → 活跃集注入 → 绑定生效（写入插件配置 bindings）
     res = await star._do_bind(_hash("a"), "aiocqhttp_main")
     assert res["status"] == "ok"
-    assert fake_cfg["platform"][1]["tokens"] == ["a"]
+    assert pc.get_bindings() == [{"token": "a", "platform_id": "aiocqhttp_main"}]
     assert real.binding_platform_for("a") == "aiocqhttp_main"
 
 
@@ -380,6 +399,7 @@ async def test_bind_refresh_makes_binding_platform_for_effective(monkeypatch):
 async def test_bind_to_inactive_platform_stays_inactive(monkeypatch):
     """绑定到未启动平台（不在活跃集）→ 即便已绑定，binding_platform_for 仍返回 None。"""
     from astrbot_plugin_botapi import runtime as rt_mod
+    from astrbot_plugin_botapi import plugin_conf as pc
 
     star, _, fake_cfg, _ = _make_star(
         monkeypatch, tokens=["a"],
@@ -391,12 +411,13 @@ async def test_bind_to_inactive_platform_stays_inactive(monkeypatch):
     real = _make_real_adapter(monkeypatch)
     real.config["tokens"] = ["a"]
     real.cfg.tokens = ["a"]
+    pc.set_tokens(["a"])
     rt_mod.runtime().adapter = real
     star.context.platform_manager = _fake_pm(_config_only_inst("botapi"))
     res = await star._do_bind(_hash("a"), "aiocqhttp_main")   # aiocqhttp_main 未在跑
     assert res["status"] == "ok"
-    # 绑定已持久化到平台 tokens
-    assert fake_cfg["platform"][1]["tokens"] == ["a"]
+    # 绑定已持久化到插件配置 bindings
+    assert pc.get_bindings() == [{"token": "a", "platform_id": "aiocqhttp_main"}]
     assert real.binding_platform_for("a") is None                     # 但未生效（回退默认路由）
 
 
@@ -405,6 +426,7 @@ async def test_stats_refreshes_active_platforms_for_binding(monkeypatch):
     """_do_stats 惰性刷新：绑定平台在 platform_manager 活跃 → 计数读绑定平台 UMO。"""
     import json
     from astrbot_plugin_botapi import runtime as rt_mod
+    from astrbot_plugin_botapi import plugin_conf as pc
 
     star, _, fake_cfg, _ = _make_star(
         monkeypatch, tokens=["a"],
@@ -416,6 +438,8 @@ async def test_stats_refreshes_active_platforms_for_binding(monkeypatch):
     real = _make_real_adapter(monkeypatch)
     real.config["tokens"] = ["a"]
     real.cfg.tokens = ["a"]
+    pc.set_tokens(["a"])                       # 账户在插件配置
+    pc.set_bindings([{"token": "a", "platform_id": "aiocqhttp_main"}])
     rt_mod.runtime().adapter = real
 
     seen = []

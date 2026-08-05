@@ -122,9 +122,10 @@ def test_bind_token_moves_existing_binding():
     assert pc.get_bindings() == [{"token": "tok1", "platform_id": "discord_y"}]
 
 
-def test_bind_token_skips_botapi_target():
+def test_bind_token_skips_botapi_target(monkeypatch):
+    """目标为 botapi 类型平台条目 → 不写入，保留原绑定（守卫需 astrbot_config 有该条目）。"""
+    _set_platform_config(monkeypatch, [{"id": "other_botapi", "type": "botapi", "enable": True}])
     a = _adapter()
     a.bind_token("tok1", "other_botapi")
     from astrbot_plugin_botapi import plugin_conf as pc
-    # 目标为 botapi 类型平台条目 → 不写入，保留原绑定
     assert pc.get_bindings() == [{"token": "tok1", "platform_id": "aiocqhttp_main"}]

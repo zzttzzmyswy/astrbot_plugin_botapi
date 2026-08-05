@@ -105,21 +105,24 @@ def _hash(t):
 
 
 @pytest.mark.asyncio
-async def test_bind_persists_to_platform_subtree(monkeypatch):
+async def test_bind_persists_to_plugin_conf_bindings(monkeypatch):
+    """绑定写入插件配置 bindings（一对一），不再写平台条目 tokens。"""
+    from astrbot_plugin_botapi import plugin_conf as pc
     star, adapter, fake_cfg, _ = _make_star(monkeypatch, tokens=["a"])
     res = await star._do_bind(_hash("a"), "aiocqhttp_main")
     assert res["status"] == "ok"
-    assert fake_cfg["platform"][1]["tokens"] == ["a"]
-    assert fake_cfg.get("_saved") is True
+    assert pc.get_bindings() == [{"token": "a", "platform_id": "aiocqhttp_main"}]
+    assert fake_cfg["platform"][1].get("tokens") == []
 
 
 @pytest.mark.asyncio
 async def test_bind_empty_platform_id_rejected(monkeypatch):
+    from astrbot_plugin_botapi import plugin_conf as pc
     star, adapter, fake_cfg, _ = _make_star(monkeypatch, tokens=["a"])
     res = await star._do_bind(_hash("a"), "")
     assert res["status"] == "error"
     assert "platform_id" in res["message"]
-    assert fake_cfg["platform"][1]["tokens"] == []
+    assert pc.get_bindings() == []
 
 
 @pytest.mark.asyncio
@@ -131,15 +134,14 @@ async def test_bind_unknown_account_rejected(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_unbind_removes_binding(monkeypatch):
-    star, adapter, fake_cfg, _ = _make_star(monkeypatch, tokens=["a"], platforms=[
-        {"id": "botapi", "type": "botapi", "tokens": ["a"], "enable": True},
-        {"id": "aiocqhttp_main", "tokens": ["a"], "enable": True},
-    ])
+async def test_unbind_removes_plugin_conf_binding(monkeypatch):
+    """解绑从插件配置 bindings 移除该 token 条目。"""
+    from astrbot_plugin_botapi import plugin_conf as pc
+    star, adapter, fake_cfg, _ = _make_star(monkeypatch, tokens=["a"])
+    pc.set_bindings([{"token": "a", "platform_id": "aiocqhttp_main"}])
     res = await star._do_unbind(_hash("a"))
     assert res["status"] == "ok"
-    assert fake_cfg["platform"][1]["tokens"] == []
-    assert fake_cfg.get("_saved") is True
+    assert pc.get_bindings() == []
 
 
 @pytest.mark.asyncio
