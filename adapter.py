@@ -29,6 +29,26 @@ _SERVER_STARTED = False
 _server_owner = None   # 当前拥有服务器（绑定端口）的 adapter 实例；仅其 terminate 可复位锁
 
 
+def _read_raw_bindings() -> list:
+    """从磁盘原始 JSON 读插件配置遗留 bindings 列表。
+
+    schema 已删 bindings 声明，check_config_integrity 在 AstrBotConfig 加载时
+    会剔除该键，load_plugin_conf() 里读不到；迁移必须在 integrity 检查前
+    从原始文件读取。文件不存在/不可读/无 bindings 键 → 空列表。
+    """
+    try:
+        from astrbot.core.utils.astrbot_path import get_astrbot_config_path
+        path = Path(get_astrbot_config_path()) / "astrbot_plugin_botapi_config.json"
+        if not path.exists():
+            return []
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+        binds = raw.get("bindings")
+        return binds if isinstance(binds, list) else []
+    except Exception:
+        return []
+
+
+
 @register_platform_adapter(
     "botapi",
     "BotAPI 自定义移动端适配器 — 一人一 Bot 极简移动端接入，支持弱网断连恢复",
@@ -71,8 +91,11 @@ class BotApiAdapter(Platform):
         self._setup_routes = lambda: _setup_routes(self)
         self._setup_routes()
 
-        # 插件配置单例：host/port + 账户数据（tokens/bindings/sessions）全局唯一。
+        # 插件配置单例：host/port + 账户数据（tokens/sessions）全局唯一。
+        # 注意：load_plugin_conf() 的 AstrBotConfig 构造会按 schema 剔除 bindings 键并
+        # 落盘，故遗留 bindings 必须在 load_plugin_conf() 之前从磁盘原始 JSON 读取。
         from .plugin_conf import load_plugin_conf, get_tokens, get_host, get_port
+        self._legacy_bindings = _read_raw_bindings()
         self._conf = load_plugin_conf()
         legacy_host, legacy_port = self._legacy_port()
         self._host = get_host() or legacy_host or "0.0.0.0"
@@ -101,15 +124,16 @@ class BotApiAdapter(Platform):
         return None, None
 
     def _migrate_accounts(self):
-        """把平台条目残留的账户数据收敛进插件配置（全局）。
+        """把平台条目残留的账户数据收敛进插件配置（全局）；遗留绑定展开到平台 tokens。
 
         1. 插件 tokens 为空且 botapi 平台条目 tokens 非空 → 迁到插件（并剥离条目 tokens）。
-        2. 非 botapi 平台条目 tokens 及遗留 botapi_bindings dict → 生成 bindings 条目。
-        3. 清理 botapi 平台条目的 botapi_bindings/nicknames/host/port/sessions。
-        幂等：插件 tokens 非空即视为已迁移，跳过 1（2/3 仍执行，无键即 no-op）；
+        2. 遗留 bindings（插件配置 bindings 列表 + 旧 botapi_bindings dict）→ 目标平台 tokens。
+        3. 删除插件配置 bindings 键（绑定关系改由平台条目 tokens 承载）。
+        4. 清理 botapi 平台条目的 botapi_bindings/nicknames/host/port/sessions。
+        幂等：插件配置无 bindings 键即视为已迁移（1/4 仍执行，无键即 no-op）；
         已迁移的 botapi 条目 tokens 保留不动（只经 1 剥离一次）。
         """
-        from .plugin_conf import get_tokens, set_tokens, get_bindings, set_bindings, save
+        from .plugin_conf import get_tokens, set_tokens, save, load_plugin_conf
         try:
             platforms = astrbot_config.get("platform")
             if not isinstance(platforms, list):
@@ -126,31 +150,35 @@ class BotApiAdapter(Platform):
                             p.pop("tokens", None)
                             changed = True
                         break
-            # 2. 非 botapi 平台条目 tokens / 遗留 botapi_bindings → bindings
-            binds = list(get_bindings())
-            existing = {b.get("token") for b in binds}
-            # 遗留 botapi_bindings dict（self.config 或 botapi 平台条目）→ {token: platform_id}
+            # 2. 遗留 bindings → 目标平台 tokens。__init__ 在 load_plugin_conf() 之前已
+            #    从磁盘原始 JSON 读取（schema 无 bindings 声明，AstrBotConfig 构造会剔除）。
+            #    测试直接调 _migrate_accounts 时走 getattr 兜底读原始文件。
+            binds = list(getattr(self, "_legacy_bindings", None) or _read_raw_bindings() or [])
             legacy_binds = dict(self.config.get("botapi_bindings") or {})
             for p in platforms:
                 if p.get("id") == self.config.get("id"):
                     legacy_binds.update(dict(p.get("botapi_bindings") or {}))
                     break
+            binds += [{"token": tok, "platform_id": pid}
+                      for tok, pid in legacy_binds.items()]
             for p in platforms:
                 if p.get("type") == "botapi" or p.get("id") == self.config.get("id"):
                     continue
-                pt = list(p.get("tokens") or [])
-                pt += [tok for tok, pid in legacy_binds.items()
-                       if pid == p.get("id") and tok not in pt]
-                if pt:
-                    for tok in pt:
-                        if tok not in existing:
-                            binds.append({"token": tok, "platform_id": p.get("id")})
-                            existing.add(tok)
-                    p.pop("tokens", None)
+                pid = p.get("id")
+                to_add = [b.get("token") for b in binds if b.get("platform_id") == pid]
+                if not to_add:
+                    continue
+                toks = list(p.get("tokens") or [])
+                new = [t for t in toks if t not in to_add] + to_add
+                if new != toks:
+                    p["tokens"] = new
                     changed = True
-            if binds:
-                set_bindings(binds)
-            # 3. 清理 botapi 平台条目旧键（tokens 仅经 1 剥离，幂等场景保留）
+            # 3. 删除插件配置 bindings 键（绑定已展开到平台 tokens）
+            conf = load_plugin_conf()
+            if "bindings" in conf:
+                conf.pop("bindings", None)
+                changed = True
+            # 4. 清理 botapi 平台条目旧键（tokens 仅经 1 剥离，幂等场景保留）
             for p in platforms:
                 if p.get("id") == self.config.get("id"):
                     for key in ("botapi_bindings", "nicknames", "host", "port", "sessions"):
@@ -280,17 +308,26 @@ class BotApiAdapter(Platform):
                 self._put(q, SSEEvent("message", data))
 
     # ── token→platform 绑定（多机器人）──
-    # 绑定存插件配置 bindings 列表（[{token, platform_id}]，一对一）。全局数据不存
-    # 平台条目（update_bot 会整体覆盖导致丢失）。
+    # 绑定 = token 出现在非 botapi 平台条目的 tokens 列表（一对一）。数据源是
+    # 模块级 astrbot_config（机器人/平台配置页维护），插件不参与绑定写入。
 
     def binding_platform_for(self, token: str) -> str | None:
-        """返回 token 绑定的 platform_id；未绑定或平台不活跃返回 None。"""
-        from .plugin_conf import get_bindings
+        """返回 token 绑定的 platform_id；未绑定或平台不活跃返回 None。
+
+        扫描 astrbot_config["platform"] 非 botapi 条目 tokens。命中后校验活跃：
+        _active_platforms 非空 → 须在集合内；为空（重启后平台注入前）→ 回退该条目
+        enable=True。
+        """
         pid = None
-        for item in get_bindings():
-            if item.get("token") == token and item.get("platform_id"):
-                pid = item["platform_id"]
-                break
+        try:
+            for p in astrbot_config.get("platform", []):
+                if p.get("id") == self.config.get("id") or p.get("type") == "botapi":
+                    continue
+                if token in (p.get("tokens") or []):
+                    pid = p.get("id")
+                    break
+        except Exception:
+            pass
         if not pid:
             return None
         active = getattr(self, "_active_platforms", None)
@@ -305,27 +342,26 @@ class BotApiAdapter(Platform):
         return None
 
     def unbind_token(self, token: str) -> None:
-        """从插件配置 bindings 移除该 token 条目；有变更才落盘。"""
-        from .plugin_conf import get_bindings, set_bindings
-        binds = [b for b in get_bindings() if b.get("token") != token]
-        if len(binds) != len(get_bindings()):
-            set_bindings(binds)
-            self._save_plugin_conf()
+        """把 token 从所有非 botapi 平台 tokens 移除；有变更才落盘。"""
+        changed = False
+        try:
+            for p in astrbot_config.get("platform", []):
+                if p.get("id") == self.config.get("id") or p.get("type") == "botapi":
+                    continue
+                toks = p.get("tokens") or []
+                if token in toks:
+                    p["tokens"] = [t for t in toks if t != token]
+                    changed = True
+        except Exception:
+            pass
+        if changed:
+            self._save_platforms()
 
-    def bind_token(self, token: str, platform_id: str) -> None:
-        """绑定 token → 目标平台：先移除旧条目（一对一），再追加。botapi 类型目标忽略。"""
-        from .plugin_conf import get_bindings, set_bindings
-        if platform_id == self.config.get("id"):
-            return
-        for p in (astrbot_config.get("platform") or []):
-            if p.get("id") == platform_id and p.get("type") == "botapi":
-                return
-        binds = [b for b in get_bindings() if b.get("token") != token]
-        binds.append({"token": token, "platform_id": platform_id})
-        set_bindings(binds)
-        self._save_plugin_conf()
-
-    def _save_plugin_conf(self):
-        """落盘插件配置单例（绑定/账户变更后调用）。"""
-        from .plugin_conf import save
-        save()
+    def _save_platforms(self):
+        """落盘平台条目变更到 astrbot_config（删除账户联动清绑定用）。"""
+        try:
+            save = getattr(astrbot_config, "save_config", None)
+            if save:
+                save()
+        except Exception:
+            pass

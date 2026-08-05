@@ -70,8 +70,9 @@ WebUI「机器人/平台」编辑 botapi 实例：
 > 插件配置（插件配置页 `astrbot_plugin_botapi_config.json`）：
 > | `host` | `0.0.0.0` | 监听地址 |
 > | `port` | `9000` | 手机 API 端口（nginx 反代） |
+> | `tokens` | `[]` | 账户注册表（BotAPI 账户 token 列表，`auth` 严格校验，空=拒连；插件后台/WebUI 管理） |
 
-机器人（平台）配置 `tokens`：**绑定到该平台的 BotAPI 账户 token 列表**（每个 token 一对一绑定一个平台；空列表则不绑定任何账户）。botapi 平台条目的 `tokens` 是账户注册表（新增账户在这里管理；`auth` 严格校验，token 必须在列表内）。
+**绑定**：在 WebUI「机器人/平台」的目标机器人（如 aiocqhttp）配置里，把 BotAPI 账户 token 加入其 `tokens` 列表 —— 绑定到该平台的账户，其会话（收发消息、历史、清空、统计）路由到该平台的 LLM 配置，独立成 `botapi_` 前缀会话；未出现在任何平台 tokens 的账户走默认单机路由。绑定由机器人/平台配置维护，插件后台不再提供绑定 UI。
 
 另需在 AstrBot 全局配置设 **`callback_api_base`**（仪表盘外部可达地址，如 `http://your-host:6185`）——媒体 URL 依赖它；不配则媒体功能降级（文本不受影响）。
 

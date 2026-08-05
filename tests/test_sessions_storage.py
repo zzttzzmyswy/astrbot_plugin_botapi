@@ -21,7 +21,7 @@ def _conf(monkeypatch, tmp_path):
     pc.reset_plugin_conf()
 
 
-def _adapter(sessions_map=None, active=None):
+def _adapter(sessions_map=None, active=None, bound=None, monkeypatch=None, bound_enabled=True):
     from astrbot_plugin_botapi.adapter import BotApiAdapter
     from astrbot_plugin_botapi import plugin_conf as pc
     _abs = BotApiAdapter.__abstractmethods__
@@ -37,6 +37,12 @@ def _adapter(sessions_map=None, active=None):
     a._active_platforms = set(active or ())
     if sessions_map:
         pc.set_sessions_map(sessions_map)
+    if monkeypatch is not None:
+        import astrbot_plugin_botapi.adapter as adapter_mod
+        platforms = [{"id": "botapi", "type": "botapi", "enable": True}]
+        if bound:
+            platforms.append({"id": bound, "tokens": ["tok"], "enable": bound_enabled})
+        monkeypatch.setattr(adapter_mod, "astrbot_config", {"platform": platforms})
     return a
 
 
@@ -142,13 +148,11 @@ async def test_delete_session_removes_and_saves():
 
 
 @pytest.mark.asyncio
-async def test_delete_session_bound_deletes_bound_umo():
+async def test_delete_session_bound_deletes_bound_umo(monkeypatch):
     """绑定 token 的会话删除必须用绑定平台 UMO（{bound}:FriendMessage:botapi_tok:abc），
     否则 delete_conversations_by_user_id 精确匹配不到 → 静默 no-op、会话泄漏。"""
-    from astrbot_plugin_botapi import plugin_conf as pc
-    pc.set_bindings([{"token": "tok", "platform_id": "aiocqhttp_main"}])
     a = _adapter(sessions_map={"tok": [{"id": "abc", "name": "x", "created_at": 1}]},
-                 active={"aiocqhttp_main"})
+                 active={"aiocqhttp_main"}, bound="aiocqhttp_main", monkeypatch=monkeypatch)
     calls = []
     import asyncio
     q = asyncio.Queue(maxsize=1)
@@ -171,12 +175,11 @@ async def test_delete_session_bound_deletes_bound_umo():
 
 
 @pytest.mark.asyncio
-async def test_delete_session_bound_inactive_uses_botapi_umo():
+async def test_delete_session_bound_inactive_uses_botapi_umo(monkeypatch):
     """绑定目标平台不在活跃集合（绑定静默回退）→ 会话实际在 botapi 自身 UMO → 删该 UMO。"""
-    from astrbot_plugin_botapi import plugin_conf as pc
-    pc.set_bindings([{"token": "tok", "platform_id": "aiocqhttp_main"}])
     a = _adapter(sessions_map={"tok": [{"id": "abc", "name": "x", "created_at": 1}]},
-                 active=set())  # 不在活跃集 → 绑定不生效
+                 active=set(), bound="aiocqhttp_main", monkeypatch=monkeypatch,
+                 bound_enabled=False)  # 平台禁用 → 绑定不生效
     calls = []
     import asyncio
     q = asyncio.Queue(maxsize=1)

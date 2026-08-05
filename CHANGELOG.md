@@ -3,9 +3,17 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [3.0.2] - 2026-08-05
 
-## [3.0.1] - 2026-08-05
+### Changed
+
+- **绑定交给机器人/平台配置**：删除插件 Web 后台的「绑定/解绑」功能与 `GET platforms`
+  端点；绑定关系由目标机器人（平台）配置的 `tokens` 列表承载（token 出现在哪个平台
+  条目的 tokens，会话即路由到该平台 LLM 配置）。账户注册表（`tokens`）仍由插件后台
+  维护；启动自动把存量插件配置 `bindings` 迁移进目标平台 tokens 后移除。
+- 删除账户时仍会从所有平台 tokens 移除该 token（联动清绑定）。
+
+
 
 ### 修复
 
@@ -208,7 +216,8 @@
 - BotAPI 适配器插件首个可用版本：`/auth` `/message` `/upload` `/stream` `/history` 五端点，纯 SSE 回复，逐 token 流式，断连重连自动补消息，多账户隔离，Dashboard 管理页。
 - 完整手机端 API 文档 `docs/API.md`。
 
-[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v3.0.1...HEAD
+[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v3.0.2...HEAD
+[3.0.2]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v3.0.2
 [3.0.1]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v3.0.1
 [3.0.0]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v3.0.0
 [2.0.2]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v2.0.2

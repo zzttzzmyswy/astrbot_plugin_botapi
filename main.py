@@ -5,7 +5,6 @@ import uuid
 from datetime import datetime
 
 from astrbot.api.star import Star, Context
-from astrbot.core import astrbot_config as _cfg_singleton
 from quart import request
 
 # AstrBot 4.26 把 Response 类（astrbot.dashboard.routes.route）改为
@@ -62,12 +61,6 @@ class BotApiStar(Star):
             f"/{P}/accounts/<token_hash>/delete", self._delete, ["POST"], "删除账户"
         )
         context.register_web_api(
-            f"/{P}/accounts/<token_hash>/bind", self._bind, ["POST"], "绑定机器人"
-        )
-        context.register_web_api(
-            f"/{P}/accounts/<token_hash>/unbind", self._unbind, ["POST"], "解绑机器人"
-        )
-        context.register_web_api(
             f"/{P}/accounts/<token_hash>/status", self._toggle, ["POST"], "启停账户"
         )
         context.register_web_api(
@@ -108,9 +101,6 @@ class BotApiStar(Star):
             self._delete_session_web,
             ["POST"],
             "删除会话",
-        )
-        context.register_web_api(
-            f"/{P}/platforms", self._platforms, ["GET"], "平台列表"
         )
 
     # ── helpers ──
@@ -208,33 +198,6 @@ class BotApiStar(Star):
             "per_account": per,
         }).__dict__
 
-    async def _do_platforms(self):
-        """返回当前可绑定的活跃平台 id 列表。
-
-        优先 adapter._active_platforms（Task 5 注入，PlatformManager 实际在跑的平台），
-        为空时回退到 astrbot_config 里 enable=True 的平台条目（平台就绪前/纯配置模式）。
-        排除 botapi 自身（绑定到自己是无意义的路由回环）。
-        """
-        self._refresh_active_platforms()
-        rt = runtime()
-        adapter = rt.adapter
-        self_id = adapter.platform_id if adapter is not None else None
-        platforms = []
-        if adapter is not None:
-            active = getattr(adapter, "_active_platforms", None)
-            if active:
-                platforms = [p for p in sorted(active) if p != self_id]
-        if not platforms:
-            for p in _cfg_singleton.get("platform", []):
-                if p.get("id") == self_id:
-                    continue
-                if p.get("type") == "botapi":
-                    continue
-                if p.get("enable"):
-                    platforms.append(p["id"])
-            platforms = sorted(set(platforms))
-        return Response().ok({"platforms": platforms}).__dict__
-
     async def _do_create(self, token=None):
         rt = runtime()
         adapter = rt.adapter
@@ -262,7 +225,7 @@ class BotApiStar(Star):
             return Response().error("未找到账户").__dict__
         toks = [t for t in get_tokens() if t != target]
         self._persist_tokens(adapter, toks)
-        adapter.unbind_token(target)          # 清 bindings
+        adapter.unbind_token(target)          # 从所有平台 tokens 移除绑定
         all_s = get_sessions_map()
         all_s.pop(target, None)               # 清 sessions
         set_sessions_map(all_s)
@@ -278,41 +241,6 @@ class BotApiStar(Star):
         if hasattr(adapter, "_token_to_origin"):
             adapter._token_to_origin.pop(target, None)
         return Response().ok({"message": "账户已删除"}).__dict__
-
-    async def _do_bind(self, token_hash, platform_id):
-        """绑定 token → 目标平台（多机器人路由）。"""
-        self._refresh_active_platforms()
-        rt = runtime()
-        adapter = rt.adapter
-        if not adapter:
-            return Response().error("适配器未就绪").__dict__
-        from .plugin_conf import get_tokens
-        target = next(
-            (t for t in get_tokens() if self._hash_tok(t) == token_hash),
-            None,
-        )
-        if not target:
-            return Response().error("未找到账户").__dict__
-        if not platform_id:
-            return Response().error("platform_id 不能为空").__dict__
-        adapter.bind_token(target, platform_id)
-        return Response().ok({"message": "绑定成功"}).__dict__
-
-    async def _do_unbind(self, token_hash):
-        """解绑 token（恢复默认单机路由）。"""
-        rt = runtime()
-        adapter = rt.adapter
-        if not adapter:
-            return Response().error("适配器未就绪").__dict__
-        from .plugin_conf import get_tokens
-        target = next(
-            (t for t in get_tokens() if self._hash_tok(t) == token_hash),
-            None,
-        )
-        if not target:
-            return Response().error("未找到账户").__dict__
-        adapter.unbind_token(target)
-        return Response().ok({"message": "已解绑"}).__dict__
 
     async def _do_toggle(self, token_hash, disabled):
         rt = runtime()
@@ -570,9 +498,6 @@ class BotApiStar(Star):
     async def _stats(self):
         return await self._do_stats()
 
-    async def _platforms(self):
-        return await self._do_platforms()
-
     async def _accounts(self):
         rt = runtime()
         adapter = rt.adapter
@@ -601,14 +526,6 @@ class BotApiStar(Star):
 
     async def _delete(self, token_hash):
         return await self._do_delete(token_hash)
-
-    async def _bind(self, token_hash):
-        data = await request.get_json()
-        platform_id = (data or {}).get("platform_id", "")
-        return await self._do_bind(token_hash, platform_id)
-
-    async def _unbind(self, token_hash):
-        return await self._do_unbind(token_hash)
 
     async def _toggle(self, token_hash):
         data = await request.get_json()

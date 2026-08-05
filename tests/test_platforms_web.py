@@ -1,4 +1,4 @@
-# tests/test_platforms_web.py — Task 7: GET platforms 端点 + 账户数据 bound_platform 字段
+# tests/test_platforms_web.py — 账户数据 bound_platform 展示字段 + _refresh_active_platforms 活跃注入
 import hashlib
 import json
 import os
@@ -34,7 +34,7 @@ def _conf(monkeypatch, tmp_path):
     os.makedirs(str(tmp_path), exist_ok=True)
     with open(conf_path, "w", encoding="utf-8") as f:
         json.dump({"host": "0.0.0.0", "port": 9000, "tokens": [],
-                   "bindings": [], "sessions": []}, f)
+                   "sessions": []}, f)
     yield
     pc.reset_plugin_conf()
 
@@ -84,10 +84,11 @@ def _make_real_adapter(monkeypatch):
     return a
 
 
-def _make_star(monkeypatch, tokens=None, bindings=None, active=None,
+def _make_star(monkeypatch, tokens=None, bound_to=None, active=None,
                config_platforms=None, cm=None, platform_manager=None):
-    """仿 test_binding_handlers.py::_make_star，扩展 _active_platforms / 平台配置。
+    """仿 test_binding_history.py::_make_star，扩展 _active_platforms / 平台配置。
 
+    bound_to: 非空则把 token 放进该平台条目的 tokens（模拟绑定）。
     config_platforms: astrbot_config["platform"] 列表（缺省只有 botapi 自身条目）。
     cm: conversation_manager fake（缺省空 FakeCM，stats 的 get_curr_conversation_id 返回 None）。
     platform_manager: context.platform_manager fake（缺省 None → _refresh_active_platforms 静默跳过）。
@@ -96,7 +97,6 @@ def _make_star(monkeypatch, tokens=None, bindings=None, active=None,
     if platform_manager is not None:
         ctx.platform_manager = platform_manager
     star = BotApiStar(ctx, None)
-    binds = dict(bindings or {})
     adapter = SimpleNamespace(
         cfg=SimpleNamespace(tokens=list(tokens or [])),
         config={"id": "botapi", "tokens": list(tokens or [])},
@@ -108,12 +108,12 @@ def _make_star(monkeypatch, tokens=None, bindings=None, active=None,
         _put=lambda q, evt: None,
     )
 
-    # 复刻真实 adapter 的 binding_platform_for 语义（绑定 + 平台活跃才返回）
+    # 复刻真实 adapter 的 binding_platform_for 语义：token 在目标平台 tokens 且平台活跃。
+    # bound_to 同时绑定"目标平台"与"该平台的 tokens 列表"（这里模拟 tokens=[第一项]）。
     def binding_platform_for(t):
-        pid = binds.get(t)
-        if not pid:
-            return None
-        return pid if pid in adapter._active_platforms else None
+        if bound_to and t == (tokens or [None])[0]:
+            return bound_to if bound_to in adapter._active_platforms else None
+        return None
     adapter.binding_platform_for = binding_platform_for
     from astrbot_plugin_botapi import runtime as rt_mod
 
@@ -122,13 +122,15 @@ def _make_star(monkeypatch, tokens=None, bindings=None, active=None,
     rt.conversation_manager = cm or SimpleNamespace(
         get_curr_conversation_id=lambda umo: None
     )
-    fake_cfg = {
-        "platform": list(
-            config_platforms
-            if config_platforms is not None
-            else [{"id": "botapi", "type": "botapi", "tokens": list(tokens or []), "enable": True}]
-        )
-    }
+    platform_entries = list(
+        config_platforms
+        if config_platforms is not None
+        else [{"id": "botapi", "type": "botapi", "tokens": list(tokens or []), "enable": True}]
+    )
+    if bound_to and not any(p.get("id") == bound_to for p in platform_entries):
+        platform_entries.append({"id": bound_to, "type": "aiocqhttp",
+                                 "tokens": list(tokens or []), "enable": True})
+    fake_cfg = {"platform": platform_entries}
 
     class FakeAstrbotConfig:
         def __getitem__(self, k):
@@ -140,102 +142,21 @@ def _make_star(monkeypatch, tokens=None, bindings=None, active=None,
         def save_config(self):
             fake_cfg["_saved"] = True
 
-    import astrbot_plugin_botapi.main as main_mod
     import astrbot_plugin_botapi.adapter as adapter_mod
 
     fake = FakeAstrbotConfig()
-    # 真实 BotApiAdapter 的 binding/bind 落盘都读模块级 astrbot_config → 与 _cfg_singleton 同一对象
     monkeypatch.setattr(adapter_mod, "astrbot_config", fake)
-    monkeypatch.setattr(main_mod, "_cfg_singleton", fake)
     return star, adapter, fake_cfg, registered
 
 
-# ── GET platforms ──
-
-
-@pytest.mark.asyncio
-async def test_platforms_from_active_set(monkeypatch):
-    """adapter._active_platforms 非空 → 直接返回活跃平台（不含 botapi 自身）。"""
-    star, adapter, _, _ = _make_star(
-        monkeypatch, tokens=["a"], active={"aiocqhttp_main", "telegram_x", "botapi"}
-    )
-    res = await star._do_platforms()
-    assert res["status"] == "ok"
-    assert res["data"]["platforms"] == ["aiocqhttp_main", "telegram_x"]
-
-
-@pytest.mark.asyncio
-async def test_platforms_fallback_to_enabled_config(monkeypatch):
-    """_active_platforms 为空 → 回退到 astrbot_config 里 enable=True 的平台条目（排除自身）。"""
-    star, adapter, _, _ = _make_star(
-        monkeypatch,
-        tokens=["a"],
-        active=set(),
-        config_platforms=[
-            {"id": "botapi", "enable": True},
-            {"id": "aiocqhttp_main", "enable": True},
-            {"id": "telegram_disabled", "enable": False},
-        ],
-    )
-    res = await star._do_platforms()
-    assert res["status"] == "ok"
-    assert res["data"]["platforms"] == ["aiocqhttp_main"]
-
-
-@pytest.mark.asyncio
-async def test_platforms_active_set_empty_falls_back(monkeypatch):
-    """active 集非空但被过滤后为空（只剩自身）→ 回退 config，保证列表非空。"""
-    star, adapter, _, _ = _make_star(
-        monkeypatch,
-        tokens=["a"],
-        active={"botapi"},
-        config_platforms=[
-            {"id": "botapi", "enable": True},
-            {"id": "aiocqhttp_main", "enable": True},
-        ],
-    )
-    res = await star._do_platforms()
-    assert res["status"] == "ok"
-    assert res["data"]["platforms"] == ["aiocqhttp_main"]
-
-
-@pytest.mark.asyncio
-async def test_platforms_adapter_not_ready(monkeypatch):
-    """adapter 未就绪 → 仍回退到 enable 平台配置，不抛异常。"""
-    star, adapter, _, _ = _make_star(
-        monkeypatch,
-        tokens=["a"],
-        active=set(),
-        config_platforms=[
-            {"id": "botapi", "type": "botapi", "enable": True},
-            {"id": "aiocqhttp_main", "enable": True},
-        ],
-    )
-    from astrbot_plugin_botapi import runtime as rt_mod
-
-    rt_mod.runtime().adapter = None
-    res = await star._do_platforms()
-    assert res["status"] == "ok"
-    assert res["data"]["platforms"] == ["aiocqhttp_main"]
-
-
-@pytest.mark.asyncio
-async def test_platforms_route_registered(monkeypatch):
-    """/astrbot_plugin_botapi/platforms 以 GET 注册。"""
-    star, adapter, _, registered = _make_star(monkeypatch, tokens=["a"])
-    assert "/astrbot_plugin_botapi/platforms" in {r[0] for r in registered}
-    routes = dict((r[0], r[2]) for r in registered)
-    assert routes["/astrbot_plugin_botapi/platforms"] == ["GET"]
-
-
-# ── bound_platform 字段 ──
+# ── bound_platform 字段（展示绑定平台，不提供绑定写入）──
 
 
 @pytest.mark.asyncio
 async def test_stats_includes_bound_platform(monkeypatch):
     """_do_stats per_account 含 bound_platform（绑定 token 显示其平台 id）。"""
     star, adapter, _, _ = _make_star(
-        monkeypatch, tokens=["a", "b"], bindings={"a": "aiocqhttp_main"},
+        monkeypatch, tokens=["a", "b"], bound_to="aiocqhttp_main",
         active={"aiocqhttp_main"},
     )
     res = await star._do_stats()
@@ -248,7 +169,7 @@ async def test_stats_includes_bound_platform(monkeypatch):
 async def test_accounts_includes_bound_platform(monkeypatch):
     """_accounts 每条含 bound_platform。"""
     star, adapter, _, _ = _make_star(
-        monkeypatch, tokens=["a", "b"], bindings={"a": "aiocqhttp_main"},
+        monkeypatch, tokens=["a", "b"], bound_to="aiocqhttp_main",
         active={"aiocqhttp_main"},
     )
     res = await star._accounts()
@@ -273,7 +194,7 @@ async def test_stats_uml_reading_still_uses_bound_conversation(monkeypatch):
     star, adapter, _, _ = _make_star(
         monkeypatch,
         tokens=["a"],
-        bindings={"a": "aiocqhttp_main"},
+        bound_to="aiocqhttp_main",
         active={"aiocqhttp_main"},   # 绑定平台需在活跃集合内才生效
         cm=FakeCM(),
     )
@@ -284,7 +205,7 @@ async def test_stats_uml_reading_still_uses_bound_conversation(monkeypatch):
     assert res["data"]["per_account"][0]["bound_platform"] == "aiocqhttp_main"
 
 
-# ── _refresh_active_platforms：从 PlatformManager 惰性注入（修复绑定静默失效）──
+# ── _refresh_active_platforms：从 PlatformManager 惰性注入（绑定路由依赖活跃集）──
 
 
 def _fake_pm(*insts):
@@ -343,90 +264,10 @@ def test_refresh_active_platforms_noop_when_adapter_none(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_platforms_refreshes_active_before_config_fallback(monkeypatch):
-    """GET platforms 惰性刷新：真实在跑平台（telegram_x）优先于 config 里 enable 但未启动的（aiocqhttp_main）。"""
-    star, adapter, _, _ = _make_star(
-        monkeypatch,
-        tokens=["a"],
-        active=set(),   # 生产未注入时的空集
-        config_platforms=[
-            {"id": "botapi", "type": "botapi", "enable": True},
-            {"id": "aiocqhttp_main", "enable": True},   # 已启用但实际未启动
-            {"id": "telegram_x", "enable": False},      # 已禁用但实际在跑
-        ],
-    )
-    star.context.platform_manager = _fake_pm(
-        _config_only_inst("botapi"),
-        _config_only_inst("telegram_x"),
-    )
-    res = await star._do_platforms()
-    assert res["status"] == "ok"
-    assert res["data"]["platforms"] == ["telegram_x"]
-
-
-@pytest.mark.asyncio
-async def test_bind_refresh_makes_binding_platform_for_effective(monkeypatch):
-    """集成：绑定 + 惰性刷新后，真实 binding_platform_for 返回目标平台（修复前恒 None）。"""
-    from astrbot_plugin_botapi import runtime as rt_mod
-    from astrbot_plugin_botapi import plugin_conf as pc
-
-    star, _, fake_cfg, _ = _make_star(
-        monkeypatch, tokens=["a"],
-        config_platforms=[
-            {"id": "botapi", "type": "botapi", "enable": True},
-            {"id": "aiocqhttp_main", "tokens": [], "enable": True},
-        ],
-    )
-    real = _make_real_adapter(monkeypatch)
-    real.config["tokens"] = ["a"]
-    real.cfg.tokens = ["a"]
-    pc.set_tokens(["a"])                       # 账户在插件配置（_do_bind 查找数据源）
-    rt_mod.runtime().adapter = real
-    star.context.platform_manager = _fake_pm(
-        _config_only_inst("botapi"),
-        _config_only_inst("aiocqhttp_main"),
-    )
-    # 修复前：活跃集为空 → 绑定静默失效
-    assert real.binding_platform_for("a") is None
-    # _do_bind 内惰性刷新 → 活跃集注入 → 绑定生效（写入插件配置 bindings）
-    res = await star._do_bind(_hash("a"), "aiocqhttp_main")
-    assert res["status"] == "ok"
-    assert pc.get_bindings() == [{"token": "a", "platform_id": "aiocqhttp_main"}]
-    assert real.binding_platform_for("a") == "aiocqhttp_main"
-
-
-@pytest.mark.asyncio
-async def test_bind_to_inactive_platform_stays_inactive(monkeypatch):
-    """绑定到未启动平台（不在活跃集）→ 即便已绑定，binding_platform_for 仍返回 None。"""
-    from astrbot_plugin_botapi import runtime as rt_mod
-    from astrbot_plugin_botapi import plugin_conf as pc
-
-    star, _, fake_cfg, _ = _make_star(
-        monkeypatch, tokens=["a"],
-        config_platforms=[
-            {"id": "botapi", "type": "botapi", "enable": True},
-            {"id": "aiocqhttp_main", "tokens": [], "enable": False},
-        ],
-    )
-    real = _make_real_adapter(monkeypatch)
-    real.config["tokens"] = ["a"]
-    real.cfg.tokens = ["a"]
-    pc.set_tokens(["a"])
-    rt_mod.runtime().adapter = real
-    star.context.platform_manager = _fake_pm(_config_only_inst("botapi"))
-    res = await star._do_bind(_hash("a"), "aiocqhttp_main")   # aiocqhttp_main 未在跑
-    assert res["status"] == "ok"
-    # 绑定已持久化到插件配置 bindings
-    assert pc.get_bindings() == [{"token": "a", "platform_id": "aiocqhttp_main"}]
-    assert real.binding_platform_for("a") is None                     # 但未生效（回退默认路由）
-
-
-@pytest.mark.asyncio
 async def test_stats_refreshes_active_platforms_for_binding(monkeypatch):
     """_do_stats 惰性刷新：绑定平台在 platform_manager 活跃 → 计数读绑定平台 UMO。"""
     import json
     from astrbot_plugin_botapi import runtime as rt_mod
-    from astrbot_plugin_botapi import plugin_conf as pc
 
     star, _, fake_cfg, _ = _make_star(
         monkeypatch, tokens=["a"],
@@ -438,8 +279,8 @@ async def test_stats_refreshes_active_platforms_for_binding(monkeypatch):
     real = _make_real_adapter(monkeypatch)
     real.config["tokens"] = ["a"]
     real.cfg.tokens = ["a"]
+    from astrbot_plugin_botapi import plugin_conf as pc
     pc.set_tokens(["a"])                       # 账户在插件配置
-    pc.set_bindings([{"token": "a", "platform_id": "aiocqhttp_main"}])
     rt_mod.runtime().adapter = real
 
     seen = []
@@ -461,3 +302,25 @@ async def test_stats_refreshes_active_platforms_for_binding(monkeypatch):
     assert res["status"] == "ok"
     assert seen == ["aiocqhttp_main:FriendMessage:botapi_a"]
     assert res["data"]["per_account"][0]["message_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_binding_requires_active_platform(monkeypatch):
+    """绑定到未启动平台（不在活跃集）→ 即便 token 在平台 tokens，binding_platform_for 仍返回 None。"""
+    from astrbot_plugin_botapi import runtime as rt_mod
+    from astrbot_plugin_botapi import plugin_conf as pc
+
+    star, _, fake_cfg, _ = _make_star(
+        monkeypatch, tokens=["a"],
+        config_platforms=[
+            {"id": "botapi", "type": "botapi", "enable": True},
+            {"id": "aiocqhttp_main", "tokens": ["a"], "enable": False},
+        ],
+    )
+    real = _make_real_adapter(monkeypatch)
+    real.config["tokens"] = ["a"]
+    real.cfg.tokens = ["a"]
+    pc.set_tokens(["a"])
+    rt_mod.runtime().adapter = real
+    star.context.platform_manager = _fake_pm(_config_only_inst("botapi"))
+    assert real.binding_platform_for("a") is None   # 平台禁用/未在跑 → 回退默认路由

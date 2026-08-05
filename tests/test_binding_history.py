@@ -81,11 +81,13 @@ def _adapter(monkeypatch):
     return a
 
 
-def _make_star(monkeypatch, tokens=None, bindings=None, sessions=None):
-    """仿 test_binding_handlers.py::_make_star：带 binding_platform_for 的假 adapter。"""
+def _make_star(monkeypatch, tokens=None, bound_to=None, sessions=None):
+    """仿 test_binding_handlers.py::_make_star：带 binding_platform_for 的假 adapter。
+
+    bound_to: 非空则把 token 放进该平台条目的 tokens（模拟绑定）。
+    """
     ctx, registered = _fake_context()
     star = BotApiStar(ctx, None)
-    binds = dict(bindings or {})
     all_s = dict(sessions or {})
     from astrbot_plugin_botapi import plugin_conf as pc
     pc.set_sessions_map(all_s)
@@ -101,28 +103,30 @@ def _make_star(monkeypatch, tokens=None, bindings=None, sessions=None):
         _put=lambda q, evt: None,
     )
 
-    # 复刻真实 adapter 的 binding_platform_for 语义（绑定 + 平台活跃才返回）
+    # 复刻真实 adapter 的 binding_platform_for 语义：token 出现在目标平台 tokens
+    # 且平台活跃才返回（无绑定 → None）。
     def binding_platform_for(t):
-        pid = binds.get(t)
-        if not pid:
-            return None
-        return pid if pid in adapter._active_platforms else None
+        if bound_to and t in (tokens or []):
+            return bound_to if bound_to in adapter._active_platforms else None
+        return None
     adapter.binding_platform_for = binding_platform_for
 
     from astrbot_plugin_botapi import runtime as rt_mod
 
     rt = rt_mod.runtime()
     rt.adapter = adapter
-    fake_cfg = {
-        "platform": [
-            {
-                "id": "botapi",
-                "tokens": list(tokens or []),
-                "nicknames": {},
-                "sessions": dict(all_s),
-            }
-        ]
-    }
+    platform_entries = [
+        {
+            "id": "botapi",
+            "tokens": list(tokens or []),
+            "nicknames": {},
+            "sessions": dict(all_s),
+        },
+    ]
+    if bound_to:
+        platform_entries.append({"id": bound_to, "type": "aiocqhttp",
+                                 "tokens": list(tokens or []), "enable": True})
+    fake_cfg = {"platform": platform_entries}
 
     class FakeAstrbotConfig:
         def __getitem__(self, k):
@@ -134,9 +138,6 @@ def _make_star(monkeypatch, tokens=None, bindings=None, sessions=None):
         def save_config(self):
             fake_cfg["_saved"] = True
 
-    import astrbot_plugin_botapi.main as main_mod
-
-    monkeypatch.setattr(main_mod, "_cfg_singleton", FakeAstrbotConfig())
     return star, adapter, fake_cfg, registered
 
 
@@ -158,7 +159,6 @@ async def test_history_uses_bound_platform_umo(monkeypatch):
             return None
     rt.conversation_manager = FakeCM()
     a = _adapter(monkeypatch)
-    pc.set_bindings([{"token": "tok", "platform_id": "aiocqhttp_main"}])
     await H.get_conversation_messages(rt, a.binding_platform_for("tok") or a.platform_id,
                                       "botapi_tok", 50)
     assert seen["umo"] == "aiocqhttp_main:FriendMessage:botapi_tok"
@@ -170,7 +170,7 @@ async def test_history_uses_bound_platform_umo(monkeypatch):
 @pytest.mark.asyncio
 async def test_do_history_bound_uses_bound_platform_umo(monkeypatch):
     """绑定 token 的 /history：get_conversation_messages 收到绑定平台 + botapi_ 前缀。"""
-    star, adapter, _, _ = _make_star(monkeypatch, tokens=["tok"], bindings={"tok": "aiocqhttp_main"})
+    star, adapter, _, _ = _make_star(monkeypatch, tokens=["tok"], bound_to="aiocqhttp_main")
     seen = {}
 
     async def fake_get(rt, pid, tok, limit):
@@ -205,7 +205,7 @@ async def test_do_history_unbound_keeps_botapi_umo(monkeypatch):
 async def test_do_history_bound_scoped_sid(monkeypatch):
     """绑定 + 分会话：botapi_ 前缀包住 scoped key。"""
     star, adapter, _, _ = _make_star(
-        monkeypatch, tokens=["tok"], bindings={"tok": "aiocqhttp_main"},
+        monkeypatch, tokens=["tok"], bound_to="aiocqhttp_main",
         sessions={"tok": [{"id": "abc", "name": "x", "created_at": 1}]},
     )
     seen = {}
@@ -226,7 +226,7 @@ async def test_do_history_bound_scoped_sid(monkeypatch):
 @pytest.mark.asyncio
 async def test_do_clear_bound_uses_bound_platform_umo(monkeypatch):
     """绑定 token 的 /clear：new_conversation 用绑定平台 umo。"""
-    star, adapter, _, _ = _make_star(monkeypatch, tokens=["tok"], bindings={"tok": "aiocqhttp_main"})
+    star, adapter, _, _ = _make_star(monkeypatch, tokens=["tok"], bound_to="aiocqhttp_main")
 
     class FakeCM:
         async def new_conversation(self, umo):
@@ -263,7 +263,7 @@ async def test_do_clear_unbound_keeps_botapi_umo(monkeypatch):
 @pytest.mark.asyncio
 async def test_do_stats_bound_counts_from_bound_platform(monkeypatch):
     """绑定 token 的 /stats：message_count 读绑定平台 conversation。"""
-    star, adapter, _, _ = _make_star(monkeypatch, tokens=["tok"], bindings={"tok": "aiocqhttp_main"})
+    star, adapter, _, _ = _make_star(monkeypatch, tokens=["tok"], bound_to="aiocqhttp_main")
     seen = []
 
     class FakeCM:

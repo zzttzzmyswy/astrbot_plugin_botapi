@@ -52,9 +52,7 @@ def _adapter(monkeypatch):
 @pytest.mark.asyncio
 async def test_submit_inbound_bound_uses_platform_umo(monkeypatch):
     from astrbot_plugin_botapi import routes as routes_mod
-    from astrbot_plugin_botapi import plugin_conf as pc
     a = _adapter(monkeypatch)
-    pc.set_bindings([{"token": "tok", "platform_id": "aiocqhttp_main"}])
     committed = []
 
     async def fake_persist(key, mid, text):
@@ -73,9 +71,7 @@ async def test_submit_inbound_bound_uses_platform_umo(monkeypatch):
 @pytest.mark.asyncio
 async def test_submit_inbound_bound_scoped_sid(monkeypatch):
     from astrbot_plugin_botapi import routes as routes_mod
-    from astrbot_plugin_botapi import plugin_conf as pc
     a = _adapter(monkeypatch)
-    pc.set_bindings([{"token": "tok", "platform_id": "aiocqhttp_main"}])
     cur = S.sessions_list(a, "tok")
     cur.append({"id": "abc", "name": "x", "created_at": 1})
     S.save_sessions(a, "tok", cur)
