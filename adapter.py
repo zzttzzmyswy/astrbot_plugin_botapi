@@ -20,7 +20,10 @@ from . import sessions as _sessions
 @register_platform_adapter(
     "botapi",
     "BotAPI 自定义移动端适配器 — 一人一 Bot 极简移动端接入，支持弱网断连恢复",
-    default_config_tmpl={},   # 无 tokens 字段（账户注册表在插件配置）
+    # 模板须非空：AstrBot config_service 用 `if not platform.default_config_tmpl: continue`
+    # 跳过空模板，空 dict 会导致新建平台下拉看不到 botapi。tokens 不入模板
+    # （账户注册表在插件配置，靠 _star_managed 分支区分布建流程，无则回落条目模式）。
+    default_config_tmpl={"id": "botapi", "type": "botapi", "enable": False},
     adapter_display_name="BotAPI 移动端",
     support_streaming_message=True,
 )
