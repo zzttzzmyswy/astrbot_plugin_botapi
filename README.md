@@ -51,8 +51,9 @@
    unzip astrbot_plugin_botapi.zip -d /path/to/AstrBot/data/plugins/
    # 生成 data/plugins/astrbot_plugin_botapi/（含 main.py + metadata.yaml + pages/）
    ```
-2. 重启 AstrBot。WebUI → **插件管理** → 确认 `astrbot_plugin_botapi` 已加载并**启用**（插件 enable 即自起服务器，无需在「机器人/平台」配置 botapi 条目）。
-3. 插件配置页确认 `host`/`port`（默认 `0.0.0.0:9000`）。
+2. 重启 AstrBot。WebUI → **插件管理** → 确认 `astrbot_plugin_botapi` 已加载并**启用**（插件 enable 即自起服务器）。
+3. （可选）WebUI → **机器人/平台** → 新增 botapi 条目（作为绑定目标，可建多个对应不同 abconf）并**启用**；不需要绑定时可省略。
+4. 插件配置页确认 `host`/`port`（默认 `0.0.0.0:9000`）。
 
 ### 方式二：git clone
 
