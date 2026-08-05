@@ -108,6 +108,26 @@ async def test_initialize_idempotent(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_initialize_constructor_failure_resets_runtime(monkeypatch):
+    """adapter 构造中途异常（runtime().adapter 已设）→ 复位 rt.adapter，允许重试。"""
+    import astrbot_plugin_botapi.adapter as adapter_mod
+    rt = _get_runtime()
+    ctx, _ = _fake_context()
+    BotApiStar(ctx, None)                  # 设 rt.context（initialize 构造参数用到）
+    assert rt.context is not None
+
+    class _Boom:
+        def __init__(self, *a, **k):
+            rt.adapter = self              # 模拟真实 __init__ 第 50 行先设 runtime
+            raise RuntimeError("load_plugin_conf failed")
+
+    monkeypatch.setattr(adapter_mod, "BotApiAdapter", _Boom)
+    with pytest.raises(RuntimeError):
+        await BotApiStar.initialize()
+    assert rt.adapter is None              # 构造失败复位，不残留死 adapter
+
+
+@pytest.mark.asyncio
 async def test_terminate_stops_server_and_resets_runtime(monkeypatch):
     from astrbot_plugin_botapi.adapter import BotApiAdapter
     ctx, _ = _fake_context()

@@ -145,6 +145,15 @@ class BotApiAdapter(Platform):
                 self._put(q, None)
 
     async def send_by_session(self, session, message_chain) -> None:
+        if getattr(self, "_is_entry", False):
+            # 条目占位壳：无 SSE 客户端/序列化器（__init__ 早退），本身无法投递。
+            # AstrBot context.send_message 按 platform.meta().id 在 platform_insts 找
+            # 回复目标，绑定账户 UMO 前缀 = 条目 id → 命中的是壳实例。转发到插件实例
+            # （跑服务器、持有 SSE 客户端），否则主动消息被基类 no-op 静默丢弃。
+            rt_adapter = getattr(runtime(), "adapter", None)
+            if rt_adapter is not None and rt_adapter is not self:
+                await rt_adapter.send_by_session(session, message_chain)
+                return
         # 原 Platform.send_by_session 的指标埋点（去 Platform 继承后自实现）：
         # create_task 调度 Metric.upload（不阻塞本次发送）。
         asyncio.create_task(

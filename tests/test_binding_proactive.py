@@ -3,6 +3,8 @@ import asyncio
 from types import SimpleNamespace
 import pytest
 
+from astrbot_plugin_botapi.adapter import BotApiAdapter
+
 
 def _adapter(monkeypatch):
     from astrbot_plugin_botapi.adapter import BotApiAdapter
@@ -59,3 +61,39 @@ async def test_send_by_session_scoped_botapi_prefix(monkeypatch):
     await a.send_by_session(session, MessageChain([Plain("hi")]))
     ev = await q.get()
     assert ev.data["session_id"] == "abc"
+
+
+@pytest.mark.asyncio
+async def test_entry_shell_send_by_session_forwards_to_plugin_instance(monkeypatch):
+    """条目壳 send_by_session 转发到插件实例（runtime.adapter）。
+
+    AstrBot context.send_message 按 platform.meta().id 在 platform_insts 里找回复目标，
+    绑定账户 UMO 前缀 = 条目 id（如 botapi_a）→ 命中的是条目占位壳实例。壳无 SSE
+    客户端/序列化器（__init__ 早退），必须转发到插件实例（跑服务器、持有 SSE 客户端），
+    否则主动消息被基类 no-op 静默丢弃。
+    """
+    from astrbot_plugin_botapi.runtime import runtime as _get_runtime
+    rt = _get_runtime()
+    a = BotApiAdapter.__new__(BotApiAdapter)
+    a.platform_id = "botapi_a"
+    a.config = {"id": "botapi_a"}
+    a._is_entry = True
+    received = []
+
+    class FakePluginInstance:
+        async def send_by_session(self, session, message_chain):
+            received.append((session, message_chain))
+
+    fake = FakePluginInstance()
+    rt.adapter = fake
+    try:
+        session = SimpleNamespace(session_id="botapi_tok")
+        from astrbot.api.event import MessageChain
+        from astrbot.api.message_components import Plain
+        mc = MessageChain([Plain("hi")])
+        await a.send_by_session(session, mc)
+        assert len(received) == 1           # 已转发到插件实例
+        assert received[0][0] is session
+        assert received[0][1] is mc
+    finally:
+        rt.adapter = None

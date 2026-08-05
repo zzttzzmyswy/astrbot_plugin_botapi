@@ -127,10 +127,14 @@ class BotApiStar(Star):
         rt = runtime()
         from .plugin_conf import get_host, get_port
         from .adapter import BotApiAdapter
-        adapter = BotApiAdapter(
-            {"id": "botapi", "_star_managed": True, "host": get_host() or "0.0.0.0",
-             "port": get_port() or 9000},
-            {}, rt.context.get_event_queue())
+        try:
+            adapter = BotApiAdapter(
+                {"id": "botapi", "_star_managed": True, "host": get_host() or "0.0.0.0",
+                 "port": get_port() or 9000},
+                {}, rt.context.get_event_queue())
+        except Exception:
+            rt.adapter = None               # 构造中途异常复位，允许重试
+            raise
         rt.adapter = adapter
         cls._server_task = asyncio.create_task(adapter.run())
 
