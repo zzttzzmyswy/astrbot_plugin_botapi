@@ -1,6 +1,5 @@
 # adapter.py
 import asyncio
-import json
 import time
 import uuid
 from collections import defaultdict
@@ -18,31 +17,11 @@ from .runtime import runtime
 from . import sessions as _sessions
 
 
-def _read_raw_bindings() -> list:
-    """从磁盘原始 JSON 读插件配置遗留 bindings 列表（迁移兜底）。
-
-    文件不存在/不可读/无 bindings 键 → 空列表。
-    """
-    try:
-        from astrbot.core.utils.astrbot_path import get_astrbot_config_path
-        path = Path(get_astrbot_config_path()) / "astrbot_plugin_botapi_config.json"
-        if not path.exists():
-            return []
-        raw = json.loads(path.read_text(encoding="utf-8-sig"))
-        binds = raw.get("bindings")
-        return binds if isinstance(binds, list) else []
-    except Exception:
-        return []
-
-
 class BotApiAdapter:
     def __init__(self, host: str, port: int, event_queue: asyncio.Queue) -> None:
         self._event_queue = event_queue
         self.platform_id = "botapi"
         self.client_self_id = uuid.uuid4().hex
-        # 兼容迁移残留：_migrate_accounts 仍读 self.config 的 legacy botapi_bindings/旧键清理。
-        # Task 5 会重写迁移；这里保持空 dict 使迁移幂等 no-op（botapi_bindings 缺省为空）。
-        self.config = {}
         self.cfg = BotApiConfig(tokens=[], sessions={})
         self._token_to_origin: dict = {}
         self._sse_clients: dict = defaultdict(list)
@@ -70,74 +49,40 @@ class BotApiAdapter:
         self._server_started = False
 
     def _migrate_accounts(self):
-        """把平台条目残留的账户数据收敛进插件配置（全局）；遗留绑定展开到平台 tokens。
+        """把平台条目残留的账户数据收敛进插件配置（全局）。
 
-        1. 插件 tokens 为空且 botapi 平台条目 tokens 非空 → 迁到插件（并剥离条目 tokens）。
-        2. 遗留 bindings（插件配置 bindings 列表 + 旧 botapi_bindings dict）→ 目标平台 tokens。
-        3. 删除插件配置 bindings 键（绑定关系改由平台条目 tokens 承载）。
-        4. 清理 botapi 平台条目的 botapi_bindings/nicknames/host/port/sessions。
-        幂等：插件配置无 bindings 键即视为已迁移（1/4 仍执行，无键即 no-op）；
+        1. 插件 tokens 为空且 botapi 平台条目 tokens 非空 → 迁到插件（剥离条目 tokens）。
+        2. 清理 botapi 平台条目的 botapi_bindings/nicknames/host/port/sessions。
+        幂等：插件 tokens 非空即视为已迁移，跳过 1（2 仍执行，无键即 no-op）；
         已迁移的 botapi 条目 tokens 保留不动（只经 1 剥离一次）。
+        绑定关系存插件配置 bindings 表（后台重建策略），迁移不做 bindings→平台展开。
         """
-        from .plugin_conf import get_tokens, set_tokens, save, load_plugin_conf
+        from .plugin_conf import get_tokens, set_tokens, save
         try:
             platforms = astrbot_config.get("platform")
             if not isinstance(platforms, list):
                 return
+            botapi_id = "botapi"
             changed = False
             plugin_tokens = get_tokens()
             if not plugin_tokens:
                 # 1. botapi 平台条目 tokens → 插件 tokens
                 for p in platforms:
-                    if p.get("id") == "botapi":
+                    if p.get("id") == botapi_id:
                         pt = p.get("tokens") or []
                         if pt:
                             set_tokens(list(pt))
                             p.pop("tokens", None)
                             changed = True
                         break
-            # 2. 遗留 bindings → 目标平台 tokens。__init__ 在 load_plugin_conf() 之前已
-            #    从磁盘原始 JSON 读取（schema 无 bindings 声明，AstrBotConfig 构造会剔除）。
-            #    测试直接调 _migrate_accounts 时走 getattr 兜底读原始文件。
-            binds = list(getattr(self, "_legacy_bindings", None) or _read_raw_bindings() or [])
-            legacy_binds = dict(self.config.get("botapi_bindings") or {})
+            # 2. 清理 botapi 平台条目旧键（tokens 仅经 1 剥离，幂等场景保留）
             for p in platforms:
-                if p.get("id") == "botapi":
-                    legacy_binds.update(dict(p.get("botapi_bindings") or {}))
-                    break
-            binds += [{"token": tok, "platform_id": pid}
-                      for tok, pid in legacy_binds.items()]
-            for p in platforms:
-                if p.get("type") == "botapi" or p.get("id") == "botapi":
-                    continue
-                pid = p.get("id")
-                to_add = [b.get("token") for b in binds if b.get("platform_id") == pid]
-                if not to_add:
-                    continue
-                toks = list(p.get("tokens") or [])
-                new = [t for t in toks if t not in to_add] + to_add
-                if new != toks:
-                    p["tokens"] = new
-                    changed = True
-            # 3. 删除插件配置 bindings 键（绑定已展开到平台 tokens）。
-            #    schema 已恢复 bindings 声明，AstrBotConfig 加载会补默认空列表——
-            #    非空才视为遗留数据需清理（bug: 空列表残留会阻断 Task 3/4 的绑定写入）。
-            conf = load_plugin_conf()
-            if conf.get("bindings"):
-                conf.pop("bindings", None)
-                changed = True
-            # 4. 清理 botapi 平台条目旧键（tokens 仅经 1 剥离，幂等场景保留）
-            for p in platforms:
-                if p.get("id") == "botapi":
+                if p.get("id") == botapi_id:
                     for key in ("botapi_bindings", "nicknames", "host", "port", "sessions"):
                         if key in p:
                             p.pop(key, None)
                             changed = True
                     break
-            for key in ("botapi_bindings", "nicknames", "host", "port", "sessions"):
-                if key in self.config:
-                    self.config.pop(key, None)
-                    changed = True
             if changed:
                 save()
                 # 平台条目清理必须持久化到 astrbot_config（核心 config.json），否则磁盘残留旧键，
