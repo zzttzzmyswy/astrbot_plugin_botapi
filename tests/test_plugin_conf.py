@@ -66,8 +66,30 @@ def test_schema_declares_account_keys():
     schema = _json.loads(
         (Path(__file__).resolve().parent.parent / "_conf_schema.json").read_text(encoding="utf-8-sig")
     )
-    for key in ("host", "port", "tokens", "sessions"):
+    for key in ("host", "port", "tokens", "bindings", "sessions"):
         assert key in schema, f"schema 缺 {key}"
-    assert "bindings" not in schema          # 绑定已由平台 tokens 承载
+    assert schema["bindings"]["type"] == "list"
     assert schema["tokens"]["type"] == "list"
     assert schema["sessions"]["type"] == "list"
+
+
+def test_bindings_roundtrip_persists(tmp_path):
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.set_bindings([{"token": "t1", "platform_id": "aiocqhttp_main"}])
+    pc.save()
+    pc.reset_plugin_conf()
+    assert pc.get_bindings() == [{"token": "t1", "platform_id": "aiocqhttp_main"}]
+
+
+def test_bindings_default_empty():
+    from astrbot_plugin_botapi import plugin_conf as pc
+    assert pc.get_bindings() == []
+
+
+def test_schema_declares_bindings():
+    import json as _json
+    from pathlib import Path
+    schema = _json.loads(
+        (Path(__file__).resolve().parent.parent / "_conf_schema.json").read_text(encoding="utf-8-sig")
+    )
+    assert schema["bindings"]["type"] == "list"

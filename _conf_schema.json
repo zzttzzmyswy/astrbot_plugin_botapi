@@ -14,6 +14,11 @@
     "type": "list",
     "default": []
   },
+  "bindings": {
+    "description": "账户→机器人绑定（[{token, platform_id}]，一对一）",
+    "type": "list",
+    "default": []
+  },
   "sessions": {
     "description": "账户会话（[{token, list:[会话]}]）",
     "type": "list",

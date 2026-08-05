@@ -32,9 +32,7 @@ _server_owner = None   # 当前拥有服务器（绑定端口）的 adapter 实�
 def _read_raw_bindings() -> list:
     """从磁盘原始 JSON 读插件配置遗留 bindings 列表。
 
-    schema 已删 bindings 声明，check_config_integrity 在 AstrBotConfig 加载时
-    会剔除该键，load_plugin_conf() 里读不到；迁移必须在 integrity 检查前
-    从原始文件读取。文件不存在/不可读/无 bindings 键 → 空列表。
+    文件不存在/不可读/无 bindings 键 → 空列表。
     """
     try:
         from astrbot.core.utils.astrbot_path import get_astrbot_config_path
@@ -91,9 +89,9 @@ class BotApiAdapter(Platform):
         self._setup_routes = lambda: _setup_routes(self)
         self._setup_routes()
 
-        # 插件配置单例：host/port + 账户数据（tokens/sessions）全局唯一。
-        # 注意：load_plugin_conf() 的 AstrBotConfig 构造会按 schema 剔除 bindings 键并
-        # 落盘，故遗留 bindings 必须在 load_plugin_conf() 之前从磁盘原始 JSON 读取。
+        # 插件配置单例：host/port + 账户数据（tokens/bindings/sessions）全局唯一。
+        # 遗留 bindings 在 load_plugin_conf() 之前从磁盘原始 JSON 读取（AstrBotConfig
+        # 会按 schema 补默认空列表，磁盘遗留非空数据须在 integrity 检查前捕获）。
         from .plugin_conf import load_plugin_conf, get_tokens, get_host, get_port
         self._legacy_bindings = _read_raw_bindings()
         self._conf = load_plugin_conf()
@@ -103,13 +101,6 @@ class BotApiAdapter(Platform):
         self._migrate_accounts()
         self.cfg.tokens = get_tokens()   # 运行时缓存（auth 用）；须在迁移之后，否则首次升级启动缓存空 tokens 拒连
         self._server_started = False
-
-    def _load_plugin_schema(self):
-        """读插件目录 _conf_schema.json 的插件配置 schema。"""
-        schema_path = Path(__file__).parent / "_conf_schema.json"
-        if schema_path.exists():
-            return json.loads(schema_path.read_text(encoding="utf-8-sig"))
-        return {}
 
     def _legacy_port(self):
         """迁移回退：读旧平台配置（astrbot_config["platform"] 里 type=botapi 条目）的 host/port；port 非数字时返回 None。"""
@@ -173,9 +164,11 @@ class BotApiAdapter(Platform):
                 if new != toks:
                     p["tokens"] = new
                     changed = True
-            # 3. 删除插件配置 bindings 键（绑定已展开到平台 tokens）
+            # 3. 删除插件配置 bindings 键（绑定已展开到平台 tokens）。
+            #    schema 已恢复 bindings 声明，AstrBotConfig 加载会补默认空列表——
+            #    非空才视为遗留数据需清理（bug: 空列表残留会阻断 Task 3/4 的绑定写入）。
             conf = load_plugin_conf()
-            if "bindings" in conf:
+            if conf.get("bindings"):
                 conf.pop("bindings", None)
                 changed = True
             # 4. 清理 botapi 平台条目旧键（tokens 仅经 1 剥离，幂等场景保留）

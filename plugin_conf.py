@@ -64,6 +64,14 @@ def set_tokens(tokens):
     load_plugin_conf()["tokens"] = list(tokens)
 
 
+def get_bindings():
+    return list(load_plugin_conf().get("bindings") or [])
+
+
+def set_bindings(bindings):
+    load_plugin_conf()["bindings"] = list(bindings)
+
+
 def get_sessions_map():
     """返回 {token: [会话对象]}。"""
     out = {}
