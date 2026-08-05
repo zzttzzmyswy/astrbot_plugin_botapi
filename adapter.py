@@ -1,18 +1,16 @@
 # adapter.py
 import asyncio
 import json
-import os
-import threading
 import time
 import uuid
 from collections import defaultdict
 from pathlib import Path
 
-from astrbot.api.platform import (register_platform_adapter, Platform, PlatformMetadata,
-    AstrBotMessage, MessageMember, MessageType)
+from astrbot.api.platform import (PlatformMetadata, AstrBotMessage,
+    MessageMember, MessageType)
 from astrbot.api.event import MessageChain
 from astrbot.core import astrbot_config
-from astrbot.core.config.astrbot_config import AstrBotConfig
+from astrbot.core.utils.metrics import Metric
 
 from .models import BotApiConfig, SSEEvent
 from .serializer import MessageSerializer
@@ -20,17 +18,8 @@ from .runtime import runtime
 from . import sessions as _sessions
 
 
-# 模块级单实例锁：一个 AstrBot 只允许一个 botapi 服务器。
-# PlatformManager（manager.py:52）对每个 botapi platform 条目都调 inst.run()，
-# 多个条目共享同一 host/port；锁保证只有第一个真正绑定端口，其余 run() 返回
-# 永不完成的协程（等待 _shutdown），避免重复绑定端口冲突。
-_server_lock = threading.Lock()
-_SERVER_STARTED = False
-_server_owner = None   # 当前拥有服务器（绑定端口）的 adapter 实例；仅其 terminate 可复位锁
-
-
 def _read_raw_bindings() -> list:
-    """从磁盘原始 JSON 读插件配置遗留 bindings 列表。
+    """从磁盘原始 JSON 读插件配置遗留 bindings 列表（迁移兜底）。
 
     文件不存在/不可读/无 bindings 键 → 空列表。
     """
@@ -46,33 +35,17 @@ def _read_raw_bindings() -> list:
         return []
 
 
-
-@register_platform_adapter(
-    "botapi",
-    "BotAPI 自定义移动端适配器 — 一人一 Bot 极简移动端接入，支持弱网断连恢复",
-    default_config_tmpl={"tokens": []},
-    config_metadata={
-        "tokens": {"description": "绑定 token 列表（账户注册表，空=拒连）",
-                   "type": "list", "items": {"type": "string"}},
-    },
-    adapter_display_name="BotAPI 移动端",
-    support_streaming_message=True,
-)
-class BotApiAdapter(Platform):
-    def __init__(self, platform_config: dict, platform_settings: dict, event_queue: asyncio.Queue) -> None:
-        super().__init__(platform_config, event_queue)
-        self.settings = platform_settings
-        # platform_config 含 @register_platform_adapter 自动补的 type/enable/id（register.py:34-41），
-        # BotApiConfig 只收 tokens/sessions，故按字段取值而非 **platform_config（否则 TypeError 'type'）。
-        self.cfg = BotApiConfig(
-            tokens=list(platform_config.get("tokens", [])),
-            sessions=dict(platform_config.get("sessions", {})),
-        )
-        self.platform_id = self.meta().id
+class BotApiAdapter:
+    def __init__(self, host: str, port: int, event_queue: asyncio.Queue) -> None:
+        self._event_queue = event_queue
+        self.platform_id = "botapi"
+        self.client_self_id = uuid.uuid4().hex
+        # 兼容迁移残留：_migrate_accounts 仍读 self.config 的 legacy botapi_bindings/旧键清理。
+        # Task 5 会重写迁移；这里保持空 dict 使迁移幂等 no-op（botapi_bindings 缺省为空）。
+        self.config = {}
+        self.cfg = BotApiConfig(tokens=[], sessions={})
         self._token_to_origin: dict = {}
         self._sse_clients: dict = defaultdict(list)
-        # 活跃平台 id 集合（PlatformManager._inst_map），Task 5 注入真实值；
-        # 绑定查询时若目标平台不在活跃集合则回退（未绑定处理）。
         self._active_platforms: set = set()
         self._disabled_tokens: set = set()
         self._last_active: dict = {}
@@ -84,35 +57,17 @@ class BotApiAdapter(Platform):
         self._serializer = MessageSerializer(_media_enabled=self._media_enabled)
         runtime().adapter = self
         from quart import Quart
-        self.app = Quart(__name__)   # 用 __name__（真实模块）；Quart("astrbot_plugin_botapi") 会因命名空间包在 Flask get_root_path 处 RuntimeError
+        self.app = Quart(__name__)
         from .routes import _setup_routes
         self._setup_routes = lambda: _setup_routes(self)
         self._setup_routes()
-
-        # 插件配置单例：host/port + 账户数据（tokens/bindings/sessions）全局唯一。
-        # 遗留 bindings 在 load_plugin_conf() 之前从磁盘原始 JSON 读取（AstrBotConfig
-        # 会按 schema 补默认空列表，磁盘遗留非空数据须在 integrity 检查前捕获）。
         from .plugin_conf import load_plugin_conf, get_tokens, get_host, get_port
-        self._legacy_bindings = _read_raw_bindings()
         self._conf = load_plugin_conf()
-        legacy_host, legacy_port = self._legacy_port()
-        self._host = get_host() or legacy_host or "0.0.0.0"
-        self._port = get_port() or legacy_port or 9000
+        self._host = get_host() or "0.0.0.0"
+        self._port = get_port() or 9000
         self._migrate_accounts()
-        self.cfg.tokens = get_tokens()   # 运行时缓存（auth 用）；须在迁移之后，否则首次升级启动缓存空 tokens 拒连
+        self.cfg.tokens = get_tokens()
         self._server_started = False
-
-    def _legacy_port(self):
-        """迁移回退：读旧平台配置（astrbot_config["platform"] 里 type=botapi 条目）的 host/port；port 非数字时返回 None。"""
-        for p in (astrbot_config.get("platform") or []):
-            if p.get("type") == "botapi":
-                port = p.get("port")
-                try:
-                    port = int(port) if port else None
-                except (TypeError, ValueError):
-                    port = None
-                return p.get("host"), port
-        return None, None
 
     def _migrate_accounts(self):
         """把平台条目残留的账户数据收敛进插件配置（全局）；遗留绑定展开到平台 tokens。
@@ -134,7 +89,7 @@ class BotApiAdapter(Platform):
             if not plugin_tokens:
                 # 1. botapi 平台条目 tokens → 插件 tokens
                 for p in platforms:
-                    if p.get("id") == self.config.get("id"):
+                    if p.get("id") == "botapi":
                         pt = p.get("tokens") or []
                         if pt:
                             set_tokens(list(pt))
@@ -147,13 +102,13 @@ class BotApiAdapter(Platform):
             binds = list(getattr(self, "_legacy_bindings", None) or _read_raw_bindings() or [])
             legacy_binds = dict(self.config.get("botapi_bindings") or {})
             for p in platforms:
-                if p.get("id") == self.config.get("id"):
+                if p.get("id") == "botapi":
                     legacy_binds.update(dict(p.get("botapi_bindings") or {}))
                     break
             binds += [{"token": tok, "platform_id": pid}
                       for tok, pid in legacy_binds.items()]
             for p in platforms:
-                if p.get("type") == "botapi" or p.get("id") == self.config.get("id"):
+                if p.get("type") == "botapi" or p.get("id") == "botapi":
                     continue
                 pid = p.get("id")
                 to_add = [b.get("token") for b in binds if b.get("platform_id") == pid]
@@ -173,7 +128,7 @@ class BotApiAdapter(Platform):
                 changed = True
             # 4. 清理 botapi 平台条目旧键（tokens 仅经 1 剥离，幂等场景保留）
             for p in platforms:
-                if p.get("id") == self.config.get("id"):
+                if p.get("id") == "botapi":
                     for key in ("botapi_bindings", "nicknames", "host", "port", "sessions"):
                         if key in p:
                             p.pop(key, None)
@@ -200,49 +155,31 @@ class BotApiAdapter(Platform):
         return PlatformMetadata(
             name="botapi",
             description="BotAPI 自定义移动端适配器",
-            id=self.config.get("id", "botapi"),
+            id="botapi",
             adapter_display_name="BotAPI 移动端",
             support_streaming_message=True,
             support_proactive_message=True,
         )
 
     def run(self):
-        # 单实例化：host/port 来自插件配置（插件配置页），而非平台配置。
-        # 多 botapi platform 条目都会调 run()，但模块级单实例锁保证只有第一个
-        # 真正绑定端口；后续条目返回永不完成的协程（_shutdown.wait()），
-        # 由 PlatformManager 驻留，待 terminate() 一并结束。
-        global _SERVER_STARTED, _server_owner
-        with _server_lock:
-            if _SERVER_STARTED:
-                # 已起过：不重复绑定端口。
-                # 若起锁者就是本实例（重启后旧协程尚在驻留），同样只等待自己的
-                # _shutdown（不退出事件循环），避免在 _server_owner 仍是自己时
-                # 误以为"锁被他人持有"而提前结束驻留协程。
-                return self._shutdown.wait()
-            _SERVER_STARTED = True
-            _server_owner = self
-        # 注意：_SERVER_STARTED 在 app.run_task 真正绑定端口成功前就已置 True；
-        # 若初始绑定失败（如端口被占）锁会泄漏为 True，之后任何 botapi 都无法再
-        # 起服务器。此为已接受的边界（绑定失败属配置错误，由平台 ERROR 状态暴露），
-        # 不做复杂守卫。
+        # 纯插件自管：host/port 来自插件配置（插件配置页）。无单实例锁——
+        # 服务器生命周期由 Star 自己拉起（Task 3），不再由 PlatformManager 调用。
         return self.app.run_task(host=self._host, port=self._port,
                                  shutdown_trigger=self._shutdown.wait)
 
-    async def terminate(self) -> None:
-        global _SERVER_STARTED, _server_owner
-        with _server_lock:
-            # 仅服务器拥有者复位锁；非拥有者（等待 _shutdown 的驻留条目）复位会
-            # 导致拥有者重启后锁已放行，新实例再绑定同一端口 → address already in use。
-            if _server_owner is self:
-                _SERVER_STARTED = False
-                _server_owner = None
+    async def shutdown(self) -> None:
         self._shutdown.set()
+        runtime().adapter = None
         for token, queues in list(self._sse_clients.items()):
             for q in queues:
                 self._put(q, None)
 
     async def send_by_session(self, session, message_chain) -> None:
-        await super().send_by_session(session, message_chain)
+        # 原 Platform.send_by_session 的指标埋点（去 Platform 继承后自实现）：
+        # create_task 调度 Metric.upload（不阻塞本次发送）。
+        asyncio.create_task(
+            Metric.upload(msg_event_tick=1, adapter_name=self.meta().name)
+        )
         # session.session_id 是 MessageSession 的第三段（裸 scoped key）：
         # 默认会话="{token}"，分会话="{token}:{sid}"（完整 umo 由 __str__ 拼前缀）。
         sess_id = session.session_id
@@ -304,6 +241,9 @@ class BotApiAdapter(Platform):
     # 绑定 = token 出现在非 botapi 平台条目的 tokens 列表（一对一）。数据源是
     # 模块级 astrbot_config（机器人/平台配置页维护），插件不参与绑定写入。
 
+    def commit_event(self, event) -> None:
+        self._event_queue.put_nowait(event)
+
     def binding_platform_for(self, token: str) -> str | None:
         """返回 token 绑定的 platform_id；未绑定或平台不活跃返回 None。
 
@@ -314,7 +254,7 @@ class BotApiAdapter(Platform):
         pid = None
         try:
             for p in astrbot_config.get("platform", []):
-                if p.get("id") == self.config.get("id") or p.get("type") == "botapi":
+                if p.get("id") == "botapi" or p.get("type") == "botapi":
                     continue
                 if token in (p.get("tokens") or []):
                     pid = p.get("id")
@@ -339,7 +279,7 @@ class BotApiAdapter(Platform):
         changed = False
         try:
             for p in astrbot_config.get("platform", []):
-                if p.get("id") == self.config.get("id") or p.get("type") == "botapi":
+                if p.get("id") == "botapi" or p.get("type") == "botapi":
                     continue
                 toks = p.get("tokens") or []
                 if token in toks:
@@ -348,13 +288,10 @@ class BotApiAdapter(Platform):
         except Exception:
             pass
         if changed:
-            self._save_platforms()
-
-    def _save_platforms(self):
-        """落盘平台条目变更到 astrbot_config（删除账户联动清绑定用）。"""
-        try:
-            save = getattr(astrbot_config, "save_config", None)
-            if save:
-                save()
-        except Exception:
-            pass
+            # 落盘平台条目变更到 astrbot_config（删除账户联动清绑定用）
+            try:
+                save = getattr(astrbot_config, "save_config", None)
+                if save:
+                    save()
+            except Exception:
+                pass

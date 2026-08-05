@@ -56,12 +56,7 @@ def _make_star(monkeypatch, tokens=None):
     from astrbot_plugin_botapi.adapter import BotApiAdapter
     from astrbot_plugin_botapi import plugin_conf as pc
     from astrbot_plugin_botapi import runtime as rt_mod
-    _abs = BotApiAdapter.__abstractmethods__
-    BotApiAdapter.__abstractmethods__ = frozenset()
-    try:
-        a = object.__new__(BotApiAdapter)
-    finally:
-        BotApiAdapter.__abstractmethods__ = _abs
+    a = BotApiAdapter.__new__(BotApiAdapter)
     a.platform_id = "botapi"
     a.config = {"id": "botapi", "type": "botapi"}
     a.cfg = SimpleNamespace(tokens=list(tokens or []))

@@ -6,7 +6,6 @@ import pytest
 
 from astrbot.api.event import MessageChain
 from astrbot.api.message_components import Plain
-from astrbot.core.platform.platform import PlatformStatus
 from astrbot_plugin_botapi.adapter import BotApiAdapter
 from astrbot_plugin_botapi.models import SSEEvent
 
@@ -20,17 +19,17 @@ def _make_adapter():
     adapter._serializer = SimpleNamespace()
     adapter.platform_id = "botapi"
     adapter.client_self_id = "selfid"
-    adapter._status = PlatformStatus.RUNNING
     return adapter
 
 
 @pytest.mark.asyncio
-async def test_terminate_sends_none_sentinel():
+async def test_shutdown_sends_none_sentinel():
     adapter = _make_adapter()
-    await adapter.terminate()
+    await adapter.shutdown()
     q = adapter._sse_clients["tok"][0]
     item = await q.get()
     assert item is None   # 哨兵
+    assert adapter._shutdown.is_set()
 
 
 @pytest.mark.asyncio

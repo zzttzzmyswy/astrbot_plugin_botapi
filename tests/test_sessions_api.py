@@ -28,12 +28,7 @@ def _conf(monkeypatch, tmp_path):
 # ── 纯逻辑测试（来自 task brief，verbatim）──
 
 def _adapter(monkeypatch):
-    _abs = BotApiAdapter.__abstractmethods__
-    BotApiAdapter.__abstractmethods__ = frozenset()
-    try:
-        a = object.__new__(BotApiAdapter)
-    finally:
-        BotApiAdapter.__abstractmethods__ = _abs
+    a = BotApiAdapter.__new__(BotApiAdapter)
     a.platform_id = "botapi"
     a.config = {"id": "botapi", "tokens": ["tok"], "nicknames": {}, "sessions": {}}
     a.cfg = SimpleNamespace(tokens=["tok"], nicknames={}, sessions={})

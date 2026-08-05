@@ -24,12 +24,7 @@ def _conf(monkeypatch, tmp_path):
 def _adapter(sessions_map=None, active=None, bound=None, monkeypatch=None, bound_enabled=True):
     from astrbot_plugin_botapi.adapter import BotApiAdapter
     from astrbot_plugin_botapi import plugin_conf as pc
-    _abs = BotApiAdapter.__abstractmethods__
-    BotApiAdapter.__abstractmethods__ = frozenset()
-    try:
-        a = object.__new__(BotApiAdapter)
-    finally:
-        BotApiAdapter.__abstractmethods__ = _abs
+    a = BotApiAdapter.__new__(BotApiAdapter)
     a.platform_id = "botapi"
     a.config = {"id": "botapi", "type": "botapi"}
     a._sse_clients = {}

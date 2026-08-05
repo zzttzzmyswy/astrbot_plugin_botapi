@@ -22,12 +22,7 @@ def _adapter(monkeypatch, platforms, self_config, plugin_conf=None):
     from astrbot_plugin_botapi.adapter import BotApiAdapter
     import astrbot_plugin_botapi.adapter as adapter_mod
     from astrbot_plugin_botapi import plugin_conf as pc
-    _abs = BotApiAdapter.__abstractmethods__
-    BotApiAdapter.__abstractmethods__ = frozenset()
-    try:
-        a = object.__new__(BotApiAdapter)
-    finally:
-        BotApiAdapter.__abstractmethods__ = _abs
+    a = BotApiAdapter.__new__(BotApiAdapter)
     a.config = dict(self_config)
     a._legacy_bindings = list((plugin_conf or {}).get("bindings") or [])
     if plugin_conf is not None:

@@ -39,7 +39,7 @@ class Response:
             return _OldResponse().error(message)
 
 
-from .adapter import BotApiAdapter  # 触发 @register_platform_adapter 注册到 platform_cls_map
+from .adapter import BotApiAdapter  # noqa: F401  (Star 生命周期自管 adapter，Task 3 起用)
 from .runtime import runtime
 from . import routes as _routes  # noqa: F401  保证模块加载
 
@@ -131,14 +131,15 @@ class BotApiStar(Star):
         if pm is None:
             return
         insts = getattr(pm, "platform_insts", None) or []
-        # 排除 botapi 自身（避免自我绑定）
+        # 排除 botapi 自身（避免自我绑定）。adapter 已无平台 config，
+        # botapi 平台 id 是常量 "botapi"。
         ids = set()
         for inst in insts:
             try:
                 pid = inst.meta().id if hasattr(inst, "meta") else inst.config.get("id")
             except Exception:
                 pid = None
-            if pid and pid != adapter.config.get("id"):
+            if pid and pid != "botapi":
                 ids.add(pid)
         adapter._active_platforms = ids
 

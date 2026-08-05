@@ -64,12 +64,7 @@ def _make_real_adapter(monkeypatch):
     """
     from astrbot_plugin_botapi.adapter import BotApiAdapter
 
-    _abs = BotApiAdapter.__abstractmethods__
-    BotApiAdapter.__abstractmethods__ = frozenset()
-    try:
-        a = object.__new__(BotApiAdapter)
-    finally:
-        BotApiAdapter.__abstractmethods__ = _abs
+    a = BotApiAdapter.__new__(BotApiAdapter)
     a.platform_id = "botapi"
     a.config = {"id": "botapi", "tokens": [], "sessions": {}}
     a.cfg = SimpleNamespace(tokens=[], sessions={})

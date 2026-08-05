@@ -24,12 +24,7 @@ def _conf(monkeypatch, tmp_path):
 def _adapter(monkeypatch):
     from astrbot_plugin_botapi.adapter import BotApiAdapter
     from astrbot_plugin_botapi import plugin_conf as pc
-    _abs = BotApiAdapter.__abstractmethods__
-    BotApiAdapter.__abstractmethods__ = frozenset()
-    try:
-        a = object.__new__(BotApiAdapter)
-    finally:
-        BotApiAdapter.__abstractmethods__ = _abs
+    a = BotApiAdapter.__new__(BotApiAdapter)
     a.platform_id = "botapi"
     a.config = {"id": "botapi", "tokens": ["tok"], "sessions": {}}
     a.cfg = SimpleNamespace(tokens=["tok"], sessions={})

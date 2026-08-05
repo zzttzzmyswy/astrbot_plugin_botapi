@@ -11,14 +11,8 @@ from astrbot_plugin_botapi.models import SSEEvent
 
 
 def _make_adapter():
-    # 绕过 PlatformManager 实例化与 ABC 抽象方法检查，直接构造测试用 adapter
-    # Python 3.14: object.__new__ 自身也会检查 abstractmethods → 临时清空
-    _abstract = BotApiAdapter.__abstractmethods__
-    BotApiAdapter.__abstractmethods__ = frozenset()
-    try:
-        adapter = object.__new__(BotApiAdapter)
-    finally:
-        BotApiAdapter.__abstractmethods__ = _abstract
+    # 去 Platform 继承后为普通类，object.__new__ 直接构造测试用 adapter
+    adapter = BotApiAdapter.__new__(BotApiAdapter)
     adapter.run = lambda: None          # Task 13 才实现
     adapter._sse_clients = {}
     adapter._media_enabled = True

@@ -59,12 +59,7 @@ def _fake_context():
 def _adapter(monkeypatch):
     """真实 BotApiAdapter（免 __init__）实例，供函数契约层测试。"""
     from astrbot_plugin_botapi.adapter import BotApiAdapter
-    _abs = BotApiAdapter.__abstractmethods__
-    BotApiAdapter.__abstractmethods__ = frozenset()
-    try:
-        a = object.__new__(BotApiAdapter)
-    finally:
-        BotApiAdapter.__abstractmethods__ = _abs
+    a = BotApiAdapter.__new__(BotApiAdapter)
     a.platform_id = "botapi"
     a.config = {"id": "botapi", "tokens": ["tok"], "sessions": {}}
     a.cfg = SimpleNamespace(tokens=["tok"], sessions={})
