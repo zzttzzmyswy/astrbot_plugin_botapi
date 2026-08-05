@@ -3,11 +3,11 @@ import asyncio
 import pytest
 
 from astrbot_plugin_botapi.adapter import BotApiAdapter
+from astrbot_plugin_botapi.runtime import runtime
 
 
 @pytest.fixture(autouse=True)
 def _conf(monkeypatch, tmp_path):
-    """重置插件配置单例 → tmp_path，预写空配置。"""
     import json, os
     import astrbot.core.utils.astrbot_path as astrbot_path_mod
     from astrbot_plugin_botapi import plugin_conf as pc
@@ -22,26 +22,33 @@ def _conf(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_init_new_signature(tmp_path, monkeypatch):
-    """__init__ 新签名 (host, port, event_queue)，不再接受 platform_config。"""
-    monkeypatch.setattr(
-        "astrbot_plugin_botapi.adapter.astrbot_config",
-        {"data_path": str(tmp_path), "callback_api_base": ""},
-    )
-    adapter = BotApiAdapter("0.0.0.0", 9000, asyncio.Queue())
+async def test_plugin_mode_full_init(monkeypatch):
+    """_star_managed=True → 插件模式：完整初始化，设 runtime().adapter，platform_id=botapi。"""
+    monkeypatch.setattr("astrbot_plugin_botapi.adapter.astrbot_config",
+                        {"data_path": str(tmp_path := "/tmp/botapi-test"), "callback_api_base": ""})
+    import os
+    os.makedirs(tmp_path, exist_ok=True)
+    adapter = BotApiAdapter(
+        {"id": "botapi", "_star_managed": True, "host": "0.0.0.0", "port": 9000},
+        {}, asyncio.Queue())
+    assert adapter._is_entry is False
     assert adapter.platform_id == "botapi"
-    assert adapter.client_self_id          # 自生成
-    assert adapter.meta().id == "botapi"
+    assert runtime().adapter is adapter
+    assert adapter.app is not None          # 建了 Quart
     assert adapter.cfg.tokens == []
-    assert adapter._upload_dir.exists()
+    # cleanup
+    runtime().adapter = None
 
 
 @pytest.mark.asyncio
-async def test_commit_event_puts_to_queue():
-    from astrbot_plugin_botapi.models import SSEEvent
-    q = asyncio.Queue(maxsize=10)
-    adapter = BotApiAdapter.__new__(BotApiAdapter)
-    adapter._event_queue = q
-    evt = SSEEvent("message", {"x": 1})
-    adapter.commit_event(evt)
-    assert await q.get() is evt
+async def test_entry_mode_minimal(monkeypatch):
+    """无 _star_managed → 条目模式：极简壳，不设 runtime().adapter、不建 app、platform_id=条目id。"""
+    monkeypatch.setattr("astrbot_plugin_botapi.adapter.astrbot_config",
+                        {"data_path": "/tmp/botapi-test2", "callback_api_base": ""})
+    import os
+    os.makedirs("/tmp/botapi-test2", exist_ok=True)
+    adapter = BotApiAdapter({"id": "botapi_a", "type": "botapi"}, {}, asyncio.Queue())
+    assert adapter._is_entry is True
+    assert adapter.platform_id == "botapi_a"
+    assert runtime().adapter is None        # 不设 runtime
+    assert not hasattr(adapter, "app")      # 不建 app

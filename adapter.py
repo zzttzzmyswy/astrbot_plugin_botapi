@@ -5,8 +5,8 @@ import uuid
 from collections import defaultdict
 from pathlib import Path
 
-from astrbot.api.platform import (PlatformMetadata, AstrBotMessage,
-    MessageMember, MessageType)
+from astrbot.api.platform import (register_platform_adapter, Platform,
+    PlatformMetadata, AstrBotMessage, MessageMember, MessageType)
 from astrbot.api.event import MessageChain
 from astrbot.core import astrbot_config
 from astrbot.core.utils.metrics import Metric
@@ -17,10 +17,24 @@ from .runtime import runtime
 from . import sessions as _sessions
 
 
-class BotApiAdapter:
-    def __init__(self, host: str, port: int, event_queue: asyncio.Queue) -> None:
-        self._event_queue = event_queue
-        self.platform_id = "botapi"
+@register_platform_adapter(
+    "botapi",
+    "BotAPI 自定义移动端适配器 — 一人一 Bot 极简移动端接入，支持弱网断连恢复",
+    default_config_tmpl={},   # 无 tokens 字段（账户注册表在插件配置）
+    adapter_display_name="BotAPI 移动端",
+    support_streaming_message=True,
+)
+class BotApiAdapter(Platform):
+    def __init__(self, platform_config, platform_settings, event_queue) -> None:
+        super().__init__(platform_config, event_queue)
+        self.platform_id = platform_config.get("id", "botapi")
+        # _shutdown 需在 _is_entry 分支前设置：条目模式的 run() 返回 _shutdown.wait()。
+        self._shutdown = asyncio.Event()
+        self._is_entry = not platform_config.get("_star_managed")
+        if self._is_entry:
+            # 条目模式：极简占位壳，仅记录 id 作为绑定目标。不建 app、不设 runtime、不读插件配置。
+            return
+        # 插件模式：完整初始化
         self.client_self_id = uuid.uuid4().hex
         self.cfg = BotApiConfig(tokens=[], sessions={})
         self._token_to_origin: dict = {}
@@ -31,7 +45,6 @@ class BotApiAdapter:
         self._uploaded_files: dict = {}
         self._upload_dir = Path(astrbot_config.get("data_path", "./data")) / "botapi_uploads"
         self._upload_dir.mkdir(parents=True, exist_ok=True)
-        self._shutdown = asyncio.Event()
         self._media_enabled = bool(astrbot_config.get("callback_api_base"))
         self._serializer = MessageSerializer(_media_enabled=self._media_enabled)
         runtime().adapter = self
@@ -107,15 +120,17 @@ class BotApiAdapter:
         return PlatformMetadata(
             name="botapi",
             description="BotAPI 自定义移动端适配器",
-            id="botapi",
+            id=self.platform_id,
             adapter_display_name="BotAPI 移动端",
             support_streaming_message=True,
             support_proactive_message=True,
         )
 
     def run(self):
-        # 纯插件自管：host/port 来自插件配置（插件配置页）。无单实例锁——
-        # 服务器生命周期由 Star 自己拉起（Task 3），不再由 PlatformManager 调用。
+        if self._is_entry:
+            # 条目模式：仅等 shutdown（占位壳，不建 server）。
+            return self._shutdown.wait()
+        # 插件模式：host/port 来自插件配置（插件配置页）。服务器生命周期由 Star 拉起。
         return self.app.run_task(host=self._host, port=self._port,
                                  shutdown_trigger=self._shutdown.wait)
 
