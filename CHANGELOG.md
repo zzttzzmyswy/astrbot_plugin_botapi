@@ -3,6 +3,17 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [3.0.4] - 2026-08-05
+
+### Changed
+
+- **botapi 重新注册为平台适配器**：可作为绑定目标。用户可把账户 token 绑定到某个 botapi
+  条目（或其他真实平台），UMO 前缀用该条目 id，经 AstrBot 路由表路由到对应 abconf。
+- **双模式适配器**：PlatformManager 实例化的 botapi 条目为占位壳（不跑服务器），服务器仍
+  由插件 enable 自起（host/port 插件配置）。
+- **迁移反转**：v3.0.3 禁用的 botapi 条目自动恢复 enable（作为绑定目标）。
+- **修复 v3.0.3 绑定下拉找不到 botapi**：绑定目标现含 botapi 条目 id。
+
 ## [3.0.3] - 2026-08-05
 
 ### Changed
@@ -230,7 +241,8 @@
 - BotAPI 适配器插件首个可用版本：`/auth` `/message` `/upload` `/stream` `/history` 五端点，纯 SSE 回复，逐 token 流式，断连重连自动补消息，多账户隔离，Dashboard 管理页。
 - 完整手机端 API 文档 `docs/API.md`。
 
-[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v3.0.3...HEAD
+[Unreleased]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/compare/v3.0.4...HEAD
+[3.0.4]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v3.0.4
 [3.0.3]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v3.0.3
 [3.0.2]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v3.0.2
 [3.0.1]: https://github.com/zzttzzmyswy/astrbot_plugin_botapi/releases/tag/v3.0.1

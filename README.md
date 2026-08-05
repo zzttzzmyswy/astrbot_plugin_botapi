@@ -71,10 +71,10 @@ WebUI → **插件管理** → `astrbot_plugin_botapi` → 插件配置页编辑
 > | `port` | `9000` | 手机 API 端口（nginx 反代） |
 > | `tokens` | `[]` | 账户注册表（BotAPI 账户 token 列表，`auth` 严格校验，空=拒连；插件后台/WebUI 管理） |
 
-**绑定**：在插件后台管理页为账户选择目标机器人（平台）。绑定后该账户的会话（收发消息、历史、
-清空、统计）以 `{平台}:FriendMessage:botapi_*` 前缀路由到该平台对应配置文件（abconf）的 LLM 配置；
-平台→abconf 的映射在 AstrBot「配置文件」管理页配置（umop 路由）。未绑定账户走默认单机路由。
-插件 enable 即启动内置服务器（host/port 在插件配置页设置），无需在「机器人/平台」配置 botapi 条目。
+**绑定**：在插件后台管理页为账户选择目标机器人（平台）。绑定目标含 botapi 条目（可建多个，
+对应不同 abconf）与真实平台。绑定后会话以 `{目标id}:FriendMessage:botapi_*` 前缀路由，
+AstrBot 路由表（配置文件管理页）把该前缀映射到 abconf。未绑定账户走默认路由。
+插件 enable 即启动内置服务器；botapi 条目 enable 表示「可作为绑定目标」，不决定服务器。
 
 另需在 AstrBot 全局配置设 **`callback_api_base`**（仪表盘外部可达地址，如 `http://your-host:6185`）——媒体 URL 依赖它；不配则媒体功能降级（文本不受影响）。
 
