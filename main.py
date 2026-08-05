@@ -1,4 +1,5 @@
 # main.py
+import asyncio
 import hashlib
 import json
 import uuid
@@ -45,6 +46,10 @@ from . import routes as _routes  # noqa: F401  保证模块加载
 
 
 class BotApiStar(Star):
+    # 类级服务器 task：插件激活时由 AstrBot 以类级静态调用 Star.initialize() 拉起，
+    # 禁用时 Star.terminate() 停服。放类级（非实例）是因为 initialize/terminate 是类方法。
+    _server_task = None
+
     def __init__(self, context: Context, config=None):
         super().__init__(context, config)
         rt = runtime()
@@ -111,6 +116,36 @@ class BotApiStar(Star):
         context.register_web_api(
             f"/{P}/platforms", self._platforms, ["GET"], "平台列表"
         )
+
+    # ── 生命周期：AstrBot 以类级静态调用 Star.initialize()/terminate()（纯插件自管）──
+
+    @classmethod
+    async def initialize(cls):
+        """插件激活时由 AstrBot 调用（star_cls.initialize()）。自建 adapter + 自起服务器。"""
+        if runtime().adapter is not None:
+            return                          # 已起过（重载等）
+        rt = runtime()
+        from .plugin_conf import get_host, get_port
+        from .adapter import BotApiAdapter
+        adapter = BotApiAdapter(get_host() or "0.0.0.0", get_port() or 9000,
+                                rt.context.get_event_queue())
+        rt.adapter = adapter
+        cls._server_task = asyncio.create_task(adapter.run())
+
+    @classmethod
+    async def terminate(cls):
+        """插件禁用/重载时由 AstrBot 调用。停服务器 + 复位 runtime。"""
+        adapter = runtime().adapter
+        if adapter is not None:
+            await adapter.shutdown()
+        task = getattr(cls, "_server_task", None)
+        if task is not None:
+            task.cancel()
+            try:
+                await asyncio.gather(task, return_exceptions=True)
+            except Exception:
+                pass
+            cls._server_task = None
 
     # ── helpers ──
 
