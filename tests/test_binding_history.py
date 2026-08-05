@@ -23,6 +23,22 @@ def _cleanup_runtime():
     rt.message_history_manager = None
 
 
+@pytest.fixture(autouse=True)
+def _conf(monkeypatch, tmp_path):
+    """重置插件配置单例 → tmp_path，预写空配置（隔离真实磁盘 data/config）。"""
+    import astrbot.core.utils.astrbot_path as astrbot_path_mod
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.reset_plugin_conf()
+    monkeypatch.setattr(astrbot_path_mod, "get_astrbot_config_path", lambda: str(tmp_path))
+    import json, os
+    conf_path = os.path.join(str(tmp_path), "astrbot_plugin_botapi_config.json")
+    os.makedirs(str(tmp_path), exist_ok=True)
+    with open(conf_path, "w", encoding="utf-8") as f:
+        json.dump({"host": "0.0.0.0", "port": 9000, "tokens": [], "bindings": [], "sessions": []}, f)
+    yield
+    pc.reset_plugin_conf()
+
+
 def _hash(t):
     return hashlib.sha256(t.encode()).hexdigest()[:16]
 
@@ -55,6 +71,8 @@ def _adapter(monkeypatch):
     a._sse_clients = {}
     a._token_to_origin = {}
     a._active_platforms = {"aiocqhttp_main"}
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.set_sessions_map(a.config.get("sessions") or {})
     import astrbot_plugin_botapi.adapter as adapter_mod
     monkeypatch.setattr(adapter_mod, "astrbot_config", {"platform": [
         {"id": "botapi", "type": "botapi", "enable": True},
@@ -69,6 +87,8 @@ def _make_star(monkeypatch, tokens=None, bindings=None, sessions=None):
     star = BotApiStar(ctx, None)
     binds = dict(bindings or {})
     all_s = dict(sessions or {})
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.set_sessions_map(all_s)
     adapter = SimpleNamespace(
         cfg=SimpleNamespace(tokens=list(tokens or []), nicknames={}, sessions=dict(all_s)),
         config={"id": "botapi", "tokens": list(tokens or []), "nicknames": {},
@@ -128,6 +148,7 @@ async def test_history_uses_bound_platform_umo(monkeypatch):
     """绑定后 /history 读绑定平台 conversation（函数契约层）。"""
     from astrbot_plugin_botapi import history as H
     from astrbot_plugin_botapi.runtime import runtime
+    from astrbot_plugin_botapi import plugin_conf as pc
     rt = runtime()
     seen = {}
 
@@ -137,6 +158,7 @@ async def test_history_uses_bound_platform_umo(monkeypatch):
             return None
     rt.conversation_manager = FakeCM()
     a = _adapter(monkeypatch)
+    pc.set_bindings([{"token": "tok", "platform_id": "aiocqhttp_main"}])
     await H.get_conversation_messages(rt, a.binding_platform_for("tok") or a.platform_id,
                                       "botapi_tok", 50)
     assert seen["umo"] == "aiocqhttp_main:FriendMessage:botapi_tok"

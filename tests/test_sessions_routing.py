@@ -1,11 +1,29 @@
 # tests/test_sessions_routing.py
+import os
 from types import SimpleNamespace
 import pytest
 from astrbot_plugin_botapi import sessions as S
 
 
+@pytest.fixture(autouse=True)
+def _conf(monkeypatch, tmp_path):
+    """重置插件配置单例 → tmp_path，预写空配置（隔离真实磁盘 data/config）。"""
+    import json
+    import astrbot.core.utils.astrbot_path as astrbot_path_mod
+    from astrbot_plugin_botapi import plugin_conf as pc
+    pc.reset_plugin_conf()
+    monkeypatch.setattr(astrbot_path_mod, "get_astrbot_config_path", lambda: str(tmp_path))
+    conf_path = os.path.join(str(tmp_path), "astrbot_plugin_botapi_config.json")
+    os.makedirs(str(tmp_path), exist_ok=True)
+    with open(conf_path, "w", encoding="utf-8") as f:
+        json.dump({"host": "0.0.0.0", "port": 9000, "tokens": [], "bindings": [], "sessions": []}, f)
+    yield
+    pc.reset_plugin_conf()
+
+
 def _adapter(monkeypatch):
     from astrbot_plugin_botapi.adapter import BotApiAdapter
+    from astrbot_plugin_botapi import plugin_conf as pc
     _abs = BotApiAdapter.__abstractmethods__
     BotApiAdapter.__abstractmethods__ = frozenset()
     try:
@@ -15,6 +33,7 @@ def _adapter(monkeypatch):
     a.platform_id = "botapi"
     a.config = {"id": "botapi", "tokens": ["tok"], "nicknames": {}, "sessions": {}}
     a.cfg = SimpleNamespace(tokens=["tok"], nicknames={}, sessions={})
+    pc.set_sessions_map(a.config.get("sessions") or {})
     a._sse_clients = {}
     a._token_to_origin = {}
     a.client_self_id = "self"
