@@ -28,6 +28,9 @@ def test_star_registers_web_apis_and_injects_runtime():
     assert "/astrbot_plugin_botapi/stats" in routes
     assert "/astrbot_plugin_botapi/accounts" in routes
     assert "/astrbot_plugin_botapi/accounts/<token_hash>/delete" in routes
+    assert "/astrbot_plugin_botapi/accounts/<token_hash>/bind" in routes
+    assert "/astrbot_plugin_botapi/accounts/<token_hash>/unbind" in routes
+    assert "/astrbot_plugin_botapi/platforms" in routes
     assert "/astrbot_plugin_botapi/sessions/<token_hash>/disconnect" in routes
     # 所有方法都是 GET 或 POST，无 DELETE/PATCH
     for _, methods, _ in registered:

@@ -14,7 +14,7 @@ def test_all_admin_routes_are_get_or_post():
             registered.append((route, methods))
 
     BotApiStar(FakeContext(), None)
-    assert len(registered) >= 7
+    assert len(registered) >= 10
     for route, methods in registered:
         assert set(methods) <= {"GET", "POST"}, f"{route} 含非 GET/POST: {methods}"
 
