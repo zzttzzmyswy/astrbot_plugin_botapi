@@ -3,6 +3,16 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [3.0.6] - 2026-08-07
+
+### Fixed
+
+- **热重启后 6186 端口「端口在、服务死」**：hypercorn 为多 worker 把监听 socket 设为
+  inheritable（去 FD_CLOEXEC），AstrBot 热重启 `os.execv` 会把该 fd 带进新进程，成为
+  无人 accept 的孤儿 socket，新进程重新 bind 报 EADDRINUSE。`main.py` 在 import 时
+  monkey-patch hypercorn `Config._create_sockets`，恢复 FD_CLOEXEC，`os.execv` 时由内核
+  自动关闭该 socket，重 bind 必然成功。
+
 ## [3.0.5] - 2026-08-05
 
 ### Fixed
