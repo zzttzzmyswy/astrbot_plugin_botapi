@@ -8,6 +8,33 @@ from datetime import datetime
 from astrbot.api.star import Star, Context
 from quart import request
 
+# ── 热重启修复：恢复监听 socket 的 FD_CLOEXEC ──────────────────────────────
+# hypercorn 为支持多 worker 在 _create_sockets 里对监听 socket 显式
+# sock.set_inheritable(True)（去掉 FD_CLOEXEC，见 hypercorn/config.py）。
+# AstrBot 热重启用 os.execv 替换进程映像（process_restart.py），无 FD_CLOEXEC
+# 的 fd 会被原样带进新进程：6186 监听 socket 成为孤儿（仍在 LISTEN 但无人
+# accept），新进程重新 bind 报 EADDRINUSE → 「端口在、服务死」。
+# 这里 monkey-patch 恢复 FD_CLOEXEC，exec 时由内核自动关闭该 socket。
+import socket as _socket
+
+import hypercorn.config as _hypercorn_config
+
+_orig_create_sockets = _hypercorn_config.Config._create_sockets
+
+
+def _patched_create_sockets(self, binds, type_=_socket.SOCK_STREAM):
+    socks = _orig_create_sockets(self, binds, type_)
+    for s in socks:
+        try:
+            s.set_inheritable(False)
+        except Exception:
+            pass
+    return socks
+
+
+_hypercorn_config.Config._create_sockets = _patched_create_sockets
+
+
 # AstrBot 4.26 把 Response 类（astrbot.dashboard.routes.route）改为
 # astrbot.dashboard.responses 的模块级 ok()/error() 函数。这里做兼容 shim，
 # 4.26+ 走新函数、4.25.x 回退旧类，调用点仍沿用 Response().ok(...).__dict__ 形式。
