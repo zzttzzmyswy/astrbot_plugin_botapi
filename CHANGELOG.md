@@ -3,6 +3,17 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [3.0.7] - 2026-09-01
+
+### Changed
+
+- **`/upload/chunk` 按客户端 offset 写入（seek + truncate）**：重复落到同一 offset
+  的块做覆盖重写而非盲目追加，使大文件分块上传的超时重试在协议层面幂等——客户端
+  重发已落地块不会重复拼入 `.part` 写坏文件。旧客户端（offset 顺序递增）行为不变。
+- **0 字节块 = 进度探针**：纯空块（客户端重试前询问服务端真实 offset，offset=-1）
+  不再写任何字节，仅返回当前 `.part` 大小，并补充了 offset 超进度/负值的非法参数
+  校验（400），防止稀疏洞或乱序写坏文件。
+
 ## [3.0.6] - 2026-08-07
 
 ### Fixed

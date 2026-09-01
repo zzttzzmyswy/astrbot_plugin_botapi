@@ -129,14 +129,32 @@ def _setup_routes(adapter):
         if chunk is None:
             return jsonify({"error": "no_file"}), 400
         part_path = adapter._upload_dir / f".{upload_id}.part"
-        # 追加写:按到达顺序拼接(offset 由客户端传入,仅用于进度/续传,此处不强校验)。
-        with open(part_path, "ab") as f:
+        try:
+            offset = int((form.get("offset") or "0").strip())
+        except (TypeError, ValueError):
+            offset = 0
+        with (open(part_path, "r+b") if part_path.exists()
+                else open(part_path, "w+b")) as f:
+            first = chunk.stream.read(65536)
+            if not first:
+                # 空块 = 进度探针(客户端离线重试前询问真实 offset):不做任何写。
+                return jsonify({"upload_id": upload_id, "offset": f.seek(0, 2)})
+            if offset < 0 or offset > f.seek(0, 2):
+                # 写入位置不能超过当前进度:防止稀疏洞/乱序写坏 .part。
+                return jsonify({"error": "invalid_offset"}), 400
+            # 按客户端 offset 写入(seek + truncate):对落在同一 offset 的重复块做
+            # 覆盖重写而非盲目追加,使超时重试幂等——重发的块不会重复拼入写坏文件。
+            # 旧客户端(offset 顺序递增)行为不变,seek 覆盖等价于顺序拼接。
+            f.seek(offset)
+            f.truncate()  # 去掉该 offset 之后可能残留的旧字节(中断的半块)
             while True:
+                f.write(first)
                 buf = chunk.stream.read(65536)
                 if not buf:
                     break
                 f.write(buf)
-        return jsonify({"upload_id": upload_id, "offset": part_path.stat().st_size})
+            new_size = f.tell()
+        return jsonify({"upload_id": upload_id, "offset": new_size})
 
     @app.post("/api/v1/botapi/upload/complete")
     async def upload_complete():
