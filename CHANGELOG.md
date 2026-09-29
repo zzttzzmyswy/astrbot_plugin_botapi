@@ -3,6 +3,23 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [3.0.8] - 2026-09-29
+
+### Security
+
+- **分块上传 `upload_id` 路径穿越**：`/upload/chunk` 与 `/upload/complete` 把客户端
+  传入的 `upload_id` 直接拼进 `.part` 文件名，`/../x` 这类值可让已鉴权客户端把数据
+  写到（或从）上传目录之外。现在 `upload_id` 只接受 `[A-Za-z0-9_-]{1,128}`，其余
+  一律 400 `invalid_upload_id`。App 生成的 `<毫秒时间戳>_<哈希>` 格式不受影响。
+
+### Fixed
+
+- **`/history?limit=` 非整数返回 500**：改为 400 `invalid_limit`；合法值夹到 1..200
+  （此前 0 / 负数会原样传入）。
+- **主动消息不进历史**：`send_by_session`（定时提醒等主动推送）只推 SSE、不写
+  `platform_message_history`，断线期间错过或在其它设备上都无法经 `/history` 补回。
+  现与普通回复一样以 `kind=final` 落库。
+
 ## [3.0.7] - 2026-09-01
 
 ### Changed
