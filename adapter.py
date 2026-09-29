@@ -182,6 +182,13 @@ class BotApiAdapter(Platform):
                                    "session_id": "" if sid == "default" else sid})
         await self._broadcast_to(scoped, evt)
         await self._push_media(message_chain, token, mid, sid)
+        # 主动消息（定时提醒等）同样落 platform_message_history：否则只存在于
+        # 当时在线的 SSE 连接里，断线期间错过或其它设备都无法经 /history 补回。
+        # （AstrBot 的 context.send_message 只为群聊落历史，botapi 是私聊。）
+        text = payload.get("content", "")
+        if text:
+            from . import history as _history
+            await _history.persist_assistant_text(scoped, mid, text, kind="final")
 
     # ── 非阻塞 SSE 投递（spec §4.2）──
     def _put(self, q: asyncio.Queue, evt):

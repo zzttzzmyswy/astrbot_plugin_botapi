@@ -1,5 +1,6 @@
 # routes.py
 import asyncio
+import re
 import time
 import uuid
 
@@ -59,6 +60,16 @@ async def submit_inbound(adapter, token, text, file_ids=None, session_id="") -> 
     await persist_inbound_text(scoped_key, msg.message_id, text)
     adapter.commit_event(event)
     return msg.message_id
+
+
+# upload_id 由客户端生成并直接拼进 .part 文件名，必须限制字符集，否则
+# "/../x" 之类可以把分块写到上传目录之外（路径穿越）。App 生成的形如
+# "<毫秒时间戳>_<哈希>"，完全落在此白名单内。
+_UPLOAD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+def _valid_upload_id(upload_id: str) -> bool:
+    return bool(_UPLOAD_ID_RE.fullmatch(upload_id or ""))
 
 
 def _setup_routes(adapter):
@@ -124,6 +135,8 @@ def _setup_routes(adapter):
         upload_id = (form.get("upload_id") or "").strip()
         if not upload_id:
             return jsonify({"error": "no_upload_id"}), 400
+        if not _valid_upload_id(upload_id):
+            return jsonify({"error": "invalid_upload_id"}), 400
         files = await request.files
         chunk = files.get("file")
         if chunk is None:
@@ -160,6 +173,8 @@ def _setup_routes(adapter):
     async def upload_complete():
         data = await request.get_json() or {}
         upload_id = (data.get("upload_id") or "").strip()
+        if not _valid_upload_id(upload_id):
+            return jsonify({"error": "invalid_upload_id"}), 400
         filename = secure_filename(data.get("filename") or "untitled")
         mime_type = data.get("mime_type") or "application/octet-stream"
         part_path = adapter._upload_dir / f".{upload_id}.part"
@@ -205,7 +220,11 @@ def _setup_routes(adapter):
         scoped = _sessions.scoped_key_for(adapter, token, sid)
         since = request.args.get("since")
         before = request.args.get("before")
-        limit = min(int(request.args.get("limit", 50)), 200)
+        try:
+            limit = int(request.args.get("limit", 50))
+        except (TypeError, ValueError):
+            return jsonify({"error": "invalid_limit"}), 400
+        limit = max(1, min(limit, 200))
         msgs, has_more = await hist_mod.get_history(adapter.platform_id, scoped, since, before, limit)
         return jsonify({"messages": msgs, "has_more": has_more})
 

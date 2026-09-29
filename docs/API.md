@@ -141,7 +141,7 @@ Authorization: Bearer <token>
 **Query 参数**：
 - `since`：拉此 ID 之后的消息（补消息）
 - `before`：翻页，此 ID 之前的消息
-- `limit`：每页条数，默认 50，最大 200
+- `limit`：每页条数，默认 50，取值夹到 1..200；非整数返回 400 `invalid_limit`
 
 **响应 200**：
 ```json
@@ -265,6 +265,8 @@ data: {}
 | 401 | `{"error":"invalid_token"}` | `/auth` 专用：token 无效/被禁用（无 code） |
 | 401 | `INVALID_TOKEN` | 其余端点：鉴权中间件返回 `{"error":"unauthorized","code":"INVALID_TOKEN"}` |
 | 400 | `no_file` | `/upload` 未带文件 |
+| 400 | `invalid_upload_id` | `/upload/chunk`、`/upload/complete`：`upload_id` 须匹配 `[A-Za-z0-9_-]{1,128}` |
+| 400 | `invalid_limit` | `/history`：`limit` 不是整数 |
 | - | `SESSION_KICKED` | SSE error 事件：管理员强制断开该会话 |
 
 ---
